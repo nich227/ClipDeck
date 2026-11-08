@@ -1,0 +1,66 @@
+# XcodeGen generates this file from project.yml. Never commit it.
+*.xcodeproj
+*.xcworkspace
+!project.yml
+
+# Build output and derived data from local and workflow runs
+/build/
+/dd/
+/ddt/
+DerivedData/
+*.xcresult
+*.hmap
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Xcode and Swift Package Manager state
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.moved-aside
+.swiftpm/
+.build/
+Package.resolved
+
+# Release artifacts come from scripts/package.sh and the release workflow and are published to
+# GitHub Releases.
+*.dmg
+*.zip
+notes.md
+/pages/
+
+# Keys, certificates, and credentials do not belong in the repository. The Developer ID lives in the
+# keychain. The notarization key lives in a keychain profile or a CI secret, and the Sparkle seed
+# lives in a CI secret.
+*.p12
+*.p8
+*.pem
+*.key
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+*.keychain
+*.keychain-db
+*ed_private*
+*private_key*
+*private-key*
+.env
+.env.*
+secrets/
+
+# Editors and the operating system
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.idea/
+.vscode/
+*.swp
+*~
+
+# Voice linter backups and scratch files
+*.voice-lint-*.bak
+*.orig
+*.rej

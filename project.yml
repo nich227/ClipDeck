@@ -1,0 +1,91 @@
+name: ClipDeck
+options:
+  bundleIdPrefix: com.kevster
+  deploymentTarget:
+    macOS: "26.0"
+  generateEmptyDirectories: true
+
+packages:
+  Lottie:
+    url: https://github.com/airbnb/lottie-ios
+    from: "4.6.0"
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.8.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    # The release workflow uses the tag to override both values. Sparkle compares the build number.
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "10000"
+    # Local builds use ad hoc signing, so they do not need a developer team or certificate.
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+
+schemes:
+  ClipDeck:
+    build:
+      targets:
+        ClipDeck: all
+        ClipDeckTests: [test]
+    test:
+      targets:
+        - ClipDeckTests
+
+targets:
+  ClipDeck:
+    type: application
+    platform: macOS
+    sources:
+      - path: ClipDeck
+        excludes:
+          - Resources/AppIcon.icon
+          - Resources/Fonts
+      # This references one file, so actool compiles the Icon Composer document instead of copying
+      # its parts.
+      - path: ClipDeck/Resources/AppIcon.icon
+        type: file
+        buildPhase: resources
+      # The folder reference is copied as a whole so that ATSApplicationFontsPath in Info.plist can
+      # name it.
+      - path: ClipDeck/Resources/Fonts
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: ClipDeck
+        PRODUCT_BUNDLE_DISPLAY_NAME: ClipDeck
+        INFOPLIST_FILE: ClipDeck/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ClipDeck/ClipDeck.entitlements
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+        COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.kevster.clipdeck.debug
+          PRODUCT_BUNDLE_DISPLAY_NAME: ClipDeck Debug
+          # The unit tests load into the app. Library validation would refuse an ad hoc test bundle.
+          ENABLE_HARDENED_RUNTIME: NO
+        Release:
+          PRODUCT_BUNDLE_IDENTIFIER: com.kevster.clipdeck
+          ENABLE_HARDENED_RUNTIME: YES
+    dependencies:
+      - sdk: libsqlite3.tbd
+      - package: Lottie
+      - package: Sparkle
+  ClipDeckTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: ClipDeckTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kevster.clipdeck.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/ClipDeck.app/Contents/MacOS/ClipDeck"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: ClipDeck
