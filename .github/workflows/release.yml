@@ -1,0 +1,228 @@
+name: release
+
+# Pushing a tag like v1.0.1 builds and signs the app, publishes a GitHub Release, and adds the
+# release to the Sparkle appcast on gh-pages. Running apps poll this appcast through SUFeedURL.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # The app needs the macOS 26 SDK, and only this image has it.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: derive versions
+        id: v
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          IFS=. read -r X Y Z <<< "$VERSION"
+          # Sparkle compares this build number, which never decreases.
+          BUILD=$((X * 10000 + Y * 100 + Z))
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+
+      - run: brew install xcodegen
+      - run: xcodegen generate
+
+      # The certificate lives only in a keychain created for this run, not in the login keychain.
+      # The password protects that keychain for minutes until it is deleted after the run.
+      - name: import signing certificate
+        id: keychain
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+
+          printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 900 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # Without permission to use the key, codesign stops at a prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep 'Developer ID Application' | head -1 \
+            | sed 's/.*"\(.*\)"/\1/')"
+          if [ -z "$IDENTITY" ]; then
+            echo "no Developer ID Application identity in the imported certificate" >&2
+            exit 1
+          fi
+          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
+          echo "keychain=$KEYCHAIN" >> "$GITHUB_OUTPUT"
+
+      - name: build
+        run: >
+          set -o pipefail &&
+          xcodebuild
+          -project ClipDeck.xcodeproj
+          -scheme ClipDeck
+          -configuration Release
+          -derivedDataPath dd
+          MARKETING_VERSION=${{ steps.v.outputs.version }}
+          CURRENT_PROJECT_VERSION=${{ steps.v.outputs.build }}
+          CODE_SIGN_STYLE=Manual
+          CODE_SIGN_IDENTITY="${{ steps.keychain.outputs.identity }}"
+          DEVELOPMENT_TEAM=8ZUR795GTN
+          OTHER_CODE_SIGN_FLAGS="--timestamp --keychain ${{ steps.keychain.outputs.keychain }}"
+          build | tail -20
+
+      # Sparkle ships its XPC services and helpers with its own signature. Notarization requires one
+      # identity for every Mach-O in the bundle, so we re-sign each one from the inside out.
+      - name: sign nested code
+        env:
+          CODESIGN_FLAGS: --timestamp --keychain ${{ steps.keychain.outputs.keychain }}
+        run: scripts/sign-nested.sh dd/Build/Products/Release/ClipDeck.app "${{ steps.keychain.outputs.identity }}"
+
+      - name: verify the signature
+        run: |
+          set -euo pipefail
+          APP=dd/Build/Products/Release/ClipDeck.app
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+          if codesign -dvv "$APP" 2>&1 | grep -q adhoc; then
+            echo "the app is ad-hoc signed" >&2
+            exit 1
+          fi
+
+          # get-task-allow is the debug entitlement, and notarization rejects it.
+          if codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q get-task-allow; then
+            echo "the build carries get-task-allow" >&2
+            exit 1
+          fi
+
+          find "$APP" -type f -perm +111 | while read -r f; do
+            if file "$f" | grep -q 'Mach-O' && codesign -dvv "$f" 2>&1 | grep -q adhoc; then
+              echo "ad-hoc signed: $f" >&2
+              exit 1
+            fi
+          done
+
+      # We complete notarization before we make the zip and dmg files because both carry the stapled
+      # ticket.
+      - name: notarize
+        env:
+          API_KEY: ${{ secrets.APPLE_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$API_KEY" | base64 --decode > "$RUNNER_TEMP/key.p8"
+          ditto -c -k --keepParent dd/Build/Products/Release/ClipDeck.app "$RUNNER_TEMP/notarize.zip"
+
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --key "$RUNNER_TEMP/key.p8" \
+            --key-id "$API_KEY_ID" \
+            --issuer "$API_ISSUER" \
+            --wait --timeout 45m
+
+          xcrun stapler staple dd/Build/Products/Release/ClipDeck.app
+          xcrun stapler validate dd/Build/Products/Release/ClipDeck.app
+          spctl --assess --type execute --verbose=2 dd/Build/Products/Release/ClipDeck.app
+
+          rm -f "$RUNNER_TEMP/key.p8" "$RUNNER_TEMP/notarize.zip"
+
+      - name: archive
+        run: ditto -c -k --sequesterRsrc --keepParent dd/Build/Products/Release/ClipDeck.app "ClipDeck-${{ steps.v.outputs.version }}.zip"
+
+      # Sparkle downloads the ZIP. People download the DMG.
+      - name: disk image
+        run: scripts/make-dmg.sh dd/Build/Products/Release/ClipDeck.app "${{ steps.v.outputs.version }}" "ClipDeck-${{ steps.v.outputs.version }}.dmg"
+
+      # A downloaded image carries the quarantine bit, so macOS checks the image first.
+      - name: sign the disk image
+        env:
+          API_KEY: ${{ secrets.APPLE_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          DMG="ClipDeck-${{ steps.v.outputs.version }}.dmg"
+
+          codesign --force --sign "${{ steps.keychain.outputs.identity }}" \
+            --timestamp \
+            --keychain "${{ steps.keychain.outputs.keychain }}" \
+            "$DMG"
+          codesign --verify --strict --verbose=2 "$DMG"
+
+          printf '%s' "$API_KEY" | base64 --decode > "$RUNNER_TEMP/dmgkey.p8"
+          xcrun notarytool submit "$DMG" \
+            --key "$RUNNER_TEMP/dmgkey.p8" \
+            --key-id "$API_KEY_ID" \
+            --issuer "$API_ISSUER" \
+            --wait --timeout 45m
+          rm -f "$RUNNER_TEMP/dmgkey.p8"
+
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+
+      - name: sign for Sparkle
+        id: sign
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: node scripts/sign-release.js "ClipDeck-${{ steps.v.outputs.version }}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES=notes.md
+          if [ -f "docs/release-notes/${{ steps.v.outputs.version }}.md" ]; then
+            cp "docs/release-notes/${{ steps.v.outputs.version }}.md" "$NOTES"
+          else
+            echo "ClipDeck ${{ steps.v.outputs.version }}." > "$NOTES"
+          fi
+          printf '\n\n## Installing\n\nOpen the disk image and drag ClipDeck to the Applications folder. Requires macOS 26 or later.\n' >> "$NOTES"
+          gh release create "$GITHUB_REF_NAME" \
+            "ClipDeck-${{ steps.v.outputs.version }}.dmg" \
+            "ClipDeck-${{ steps.v.outputs.version }}.zip" \
+            --title "ClipDeck ${{ steps.v.outputs.version }}" \
+            --notes-file "$NOTES"
+
+      # The certificate is deleted whether the run passes or fails, so it does not outlive the run.
+      - name: remove the keychain
+        if: always()
+        run: |
+          security list-keychains -d user -s login.keychain-db || true
+          security delete-keychain "${{ steps.keychain.outputs.keychain }}" || true
+
+      - name: update appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          git fetch origin gh-pages && git worktree add pages origin/gh-pages || {
+            git worktree add --detach pages
+            cd pages && git checkout --orphan gh-pages && git rm -rfq . && cd ..
+          }
+          MINIMUM="$(/usr/bin/plutil -extract LSMinimumSystemVersion raw -o - dd/Build/Products/Release/ClipDeck.app/Contents/Info.plist)"
+          node scripts/update-appcast.js pages/updates.xml.rss \
+            "${{ steps.v.outputs.version }}" \
+            "${{ steps.v.outputs.build }}" \
+            "https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/ClipDeck-${{ steps.v.outputs.version }}.zip" \
+            "${{ steps.sign.outputs.length }}" \
+            "${{ steps.sign.outputs.signature }}" \
+            "$MINIMUM" \
+            "notes.md"
+          cd pages
+          git -c user.name=github-actions -c user.email=github-actions@github.com add updates.xml.rss
+          git -c user.name=github-actions -c user.email=github-actions@github.com commit -m "appcast: ${{ steps.v.outputs.version }}"
+          git push origin HEAD:gh-pages
