@@ -71,8 +71,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     /// The panel copies the selection back with its original types, then closes. The user pastes
-    /// the selection. If there is no selection to copy, the panel stays open to show that it copied
-    /// nothing.
+    /// the selection. If the copy fails, the panel stays open, so the user sees that nothing was
+    /// copied.
     func copySelection() {
         guard let item = viewModel.selectedItem else { return }
         Task {
@@ -110,13 +110,18 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     private func frameOnMouseScreen() -> NSRect {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        Self.frame(in: NSScreen.visibleFrameUnderMouse)
+    }
+
+    /// The panel is centered with a fixed fraction of the screen above it. On a screen too short
+    /// for that, the panel moves up until its lower edge is on the screen. The search field at the
+    /// top stays on the screen even when the whole panel cannot fit.
+    static func frame(in visible: NSRect) -> NSRect {
         let size = NSSize(width: Constants.Panel.width, height: Constants.Panel.height)
+        let preferredY = visible.maxY - visible.height * Constants.Panel.topInset - size.height
         let origin = NSPoint(
-            x: visible.midX - size.width / 2,
-            y: visible.maxY - visible.height * Constants.Panel.topInset - size.height
+            x: max(visible.midX - size.width / 2, visible.minX),
+            y: min(max(preferredY, visible.minY), visible.maxY - size.height)
         )
         return NSRect(origin: origin, size: size)
     }
@@ -147,19 +152,37 @@ final class PanelController: NSObject, NSWindowDelegate {
         // While an input method composes Japanese or Chinese text, Return commits the composition,
         // so the field editor keeps Return.
         let isComposing = (panel?.firstResponder as? NSTextView)?.hasMarkedText() == true
+        guard !isComposing else { return false }
         switch Int(event.keyCode) {
-        case kVK_DownArrow where !isComposing:
+        case kVK_DownArrow:
             viewModel.moveSelection(by: 1)
-        case kVK_UpArrow where !isComposing:
+        case kVK_UpArrow:
             viewModel.moveSelection(by: -1)
-        case kVK_Return where !isComposing, kVK_ANSI_KeypadEnter where !isComposing:
+        case kVK_PageDown:
+            viewModel.moveSelection(by: Self.pageStep)
+        case kVK_PageUp:
+            viewModel.moveSelection(by: -Self.pageStep)
+        case kVK_Return, kVK_ANSI_KeypadEnter:
             copySelection()
-        case kVK_Escape where !isComposing:
-            hide()
+        case kVK_Escape:
+            if viewModel.query.isEmpty { hide() } else { viewModel.query = "" }
         default:
             return false
         }
         return true
+    }
+
+    /// Page Up and Page Down move by the number of rows on screen, minus one row that stays for
+    /// context.
+    private static let pageStep = Constants.Panel.visibleRows - 1
+}
+
+extension NSScreen {
+    /// This is the usable area of the screen that contains the mouse pointer.
+    static var visibleFrameUnderMouse: NSRect {
+        let mouse = NSEvent.mouseLocation
+        let screen = screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? main
+        return screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
     }
 }
 

@@ -22,10 +22,12 @@ struct PanelView: View {
                     isActive: viewModel.isVisible,
                     refreshToken: viewModel.refreshToken
                 )
-                    .frame(width: Constants.Panel.previewWidth)
+                .equatable()
+                .frame(width: Constants.Panel.previewWidth)
             }
             Hairline(axis: .horizontal)
-            footer
+            PanelFooter(hasQuery: !viewModel.query.isEmpty)
+                .equatable()
         }
         .frame(width: Constants.Panel.width, height: Constants.Panel.height)
         .opacity(appeared ? 1 : 0)
@@ -34,25 +36,29 @@ struct PanelView: View {
             visible ? reveal() : (appeared = false)
         }
         .onAppear(perform: reveal)
+        .onChange(of: viewModel.loadFailed) { _, failed in
+            if failed { announceLoadFailure() }
+        }
     }
 
     private func reveal() {
         withAnimation(Anim.allowed(Anim.standard, reduceMotion: reduceMotion)) { appeared = true }
-        // The field can take focus only on the next run loop turn after the panel becomes key.
+        // The field can receive focus only on the next run loop turn after the panel becomes key.
         DispatchQueue.main.async { searchFocused = true }
     }
 
     private var searchBar: some View {
         HStack(spacing: Space.sm) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .regular))
+                .font(.system(size: Glyph.inline, weight: .regular))
                 .foregroundStyle(Palette.textTertiary)
+                .accessibilityHidden(true)
             TextField("Search", text: $viewModel.query)
                 .textFieldStyle(.plain)
                 .deckFont(.search)
                 .foregroundStyle(Palette.textPrimary)
                 .focused($searchFocused)
-                .accessibilityLabel("Search your clipboard history")
+                .accessibilityLabel("Search clipboard history")
         }
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.md)
@@ -60,51 +66,40 @@ struct PanelView: View {
 
     @ViewBuilder
     private var listArea: some View {
-        if viewModel.items.isEmpty {
-            EmptyStateView(isSearching: viewModel.isSearching, isActive: viewModel.isVisible)
+        if !viewModel.items.isEmpty {
+            HistoryList(
+                items: viewModel.items,
+                selectedID: viewModel.selectedID,
+                selectedIndex: viewModel.selectedIndex,
+                refreshToken: viewModel.refreshToken,
+                isActive: viewModel.isVisible,
+                query: viewModel.query,
+                location: viewModel.store.location,
+                onSelect: { viewModel.select($0) },
+                onCopy: { item in
+                    viewModel.select(item)
+                    onCopy()
+                },
+                onRowAppear: { viewModel.loadMoreIfNeeded(after: $0) }
+            )
+            .equatable()
+        } else if viewModel.loadFailed {
+            LoadFailedView()
+        } else if viewModel.hasLoaded {
+            // Any typed text counts as a search here. The search has not run yet for a query one
+            // character long. The empty-history state must not flash while the full list loads.
+            let query = viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines)
+            EmptyStateView(query: query.isEmpty ? nil : query, isActive: viewModel.isVisible)
         } else {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: Space.xxs) {
-                        ForEach(viewModel.items) { item in
-                            ClipRow(
-                                item: item,
-                                isSelected: item.id == viewModel.selectedID,
-                                thumbnailURL: viewModel.store.location.thumbnailURL(for: item.hash),
-                                refreshToken: viewModel.refreshToken
-                            )
-                            .id(item.id)
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) {
-                                viewModel.select(item)
-                                onCopy()
-                            }
-                            .onTapGesture { viewModel.select(item) }
-                            .onAppear { viewModel.loadMoreIfNeeded(after: item) }
-                        }
-                    }
-                    .padding(Space.xs)
-                }
-                .onChange(of: viewModel.selectedID) { _, id in
-                    guard let id else { return }
-                    proxy.scrollTo(id)
-                }
-            }
+            // The first page has not loaded yet. An empty state here would flash before it loads.
+            Color.clear
         }
     }
 
-    private var footer: some View {
-        HStack(spacing: Space.md) {
-            KeyHint(key: "\u{21A9}", label: "Copy")
-            KeyHint(key: "\u{2191}\u{2193}", label: "Move")
-            KeyHint(key: "esc", label: "Close")
-            Spacer()
-            Text("Press Return to copy an item, then paste it in any app.")
-                .deckFont(.caption)
-                .foregroundStyle(Palette.textTertiary)
-        }
-        .padding(.horizontal, Space.lg)
-        .padding(.vertical, Space.xs)
+    /// Focus stays in the search field, so VoiceOver announces a failed load.
+    private func announceLoadFailure() {
+        guard NSWorkspace.shared.isVoiceOverEnabled else { return }
+        AccessibilityNotification.Announcement("\(LoadFailedView.title). \(LoadFailedView.message)").post()
     }
 }
 
@@ -115,185 +110,137 @@ struct Hairline: View {
         Rectangle()
             .fill(Palette.hairline)
             .frame(width: axis == .vertical ? 1 : nil, height: axis == .horizontal ? 1 : nil)
+            .accessibilityHidden(true)
+    }
+}
+
+/// The key hints appear first. One line then says what copying does. That line gives way first when
+/// the panel's text is longer than the English text.
+private struct PanelFooter: View, Equatable {
+    let hasQuery: Bool
+
+    var body: some View {
+        HStack(spacing: Space.md) {
+            KeyHint(key: .symbol("return"), label: "Copy", spoken: "Return, copy")
+            KeyHint(key: .symbol("arrow.up.arrow.down"), label: "Move", spoken: "Up Arrow or Down Arrow, move")
+            KeyHint(key: .text("esc"), label: hasQuery ? "Clear" : "Close", spoken: hasQuery ? "Escape, clear the search" : "Escape, close")
+            Spacer(minLength: Space.md)
+            Text("Press Return to copy an item, then paste it in any app.")
+                .deckFont(.caption)
+                .foregroundStyle(Palette.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.xs)
     }
 }
 
 private struct KeyHint: View {
-    let key: String
+    enum Key {
+        case symbol(String)
+        case text(String)
+    }
+
+    let key: Key
     let label: String
+    let spoken: String
 
     var body: some View {
         HStack(spacing: Space.xxs) {
-            Text(key)
-                .deckFont(.mono)
+            keyCap
                 .foregroundStyle(Palette.textSecondary)
                 .padding(.horizontal, Space.xxs)
-                .background(RoundedRectangle(cornerRadius: Radius.xs).fill(Palette.surface1))
+                .frame(minWidth: Space.lg, minHeight: Space.lg)
+                .background(RoundedRectangle(cornerRadius: Radius.xs, style: .continuous).fill(Palette.surface1))
             Text(label)
                 .deckFont(.caption)
-                .foregroundStyle(Palette.textTertiary)
+                .foregroundStyle(Palette.textSecondary)
         }
-        .accessibilityElement(children: .combine)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spoken)
     }
-}
 
-struct ClipRow: View {
-    let item: ClipItem
-    let isSelected: Bool
-    let thumbnailURL: URL
-    let refreshToken: Int
-
-    @State private var isHovered = false
-
-    var body: some View {
-        HStack(spacing: Space.sm) {
-            ThumbnailView(item: item, url: thumbnailURL, side: 32, fill: true, refreshToken: refreshToken)
-            VStack(alignment: .leading, spacing: Space.xxs) {
-                Text(item.title)
-                    .deckFont(.body)
-                    .foregroundStyle(item.isMissing ? Palette.textTertiary : Palette.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                HStack(spacing: Space.xxs) {
-                    if item.isMissing {
-                        Text("Not Found").foregroundStyle(Palette.caution)
-                    }
-                    Text(ItemFormatting.subtitle(for: item))
-                        .foregroundStyle(Palette.textTertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+    @ViewBuilder
+    private var keyCap: some View {
+        switch key {
+        case .symbol(let name):
+            Image(systemName: name)
                 .deckFont(.caption)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Space.sm)
-        .padding(.vertical, Space.xs)
-        .background(
-            RoundedRectangle(cornerRadius: Radius.sm, style: .continuous)
-                .fill(isSelected ? Palette.surface2 : (isHovered ? Palette.surface1 : Color.clear))
-        )
-        .overlay(alignment: .leading) {
-            if isSelected {
-                Capsule()
-                    .fill(Palette.accent)
-                    .frame(width: 2, height: 16)
-            }
-        }
-        .onHover { isHovered = $0 }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-struct ThumbnailView: View {
-    let item: ClipItem
-    let url: URL
-    let side: CGFloat
-    let fill: Bool
-    let refreshToken: Int
-
-    @State private var image: NSImage?
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: Radius.xs, style: .continuous)
-                .fill(Palette.surface1)
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: fill ? .fill : .fit)
-            } else {
-                Image(systemName: item.kind.systemImage)
-                    .font(.system(size: side * 0.4, weight: .light))
-                    .foregroundStyle(Palette.textSecondary)
-            }
-        }
-        .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.xs, style: .continuous))
-        .opacity(item.isMissing ? 0.4 : 1)
-        .task(id: "\(item.hash)#\(refreshToken)") {
-            guard item.kind != .text else {
-                image = nil
-                return
-            }
-            if let cached = ThumbnailCache.shared.cachedImage(for: item.hash) {
-                image = cached
-            } else {
-                image = await ThumbnailCache.shared.image(for: item.hash, at: url)
-            }
+        case .text(let text):
+            Text(text)
+                .deckFont(.mono)
         }
     }
 }
 
 struct EmptyStateView: View {
-    let isSearching: Bool
+    /// The value is the search that found nothing, or nil when the history itself is empty.
+    let query: String?
     /// The animation runs only while the panel is on screen.
     let isActive: Bool
+
+    private var isSearching: Bool { query != nil }
 
     var body: some View {
         VStack(spacing: Space.sm) {
             glyph
-            Text(isSearching ? "No Results" : "No Items")
+            Text(query.map { "No Results for \u{201C}\($0)\u{201D}" } ?? "No Items")
                 .deckFont(.label)
-                .foregroundStyle(Palette.textSecondary)
-            Text(isSearching ? "Try a different search." : "Items you copy will appear here.")
+                .foregroundStyle(Palette.textPrimary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .multilineTextAlignment(.center)
+            Text(isSearching ? "Check the spelling or try a new search." : "Items you copy will appear here.")
                 .deckFont(.caption)
-                .foregroundStyle(Palette.textTertiary)
+                .foregroundStyle(Palette.textSecondary)
+                .multilineTextAlignment(.center)
         }
+        .padding(.horizontal, Space.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
+    /// Each drawing keeps its place while the words beside it change. The glass draws once when a
+    /// search first finds nothing and holds through the keystrokes that follow.
     @ViewBuilder
     private var glyph: some View {
         if isSearching {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 28, weight: .light))
-                .foregroundStyle(Palette.accent)
-                .frame(width: 72, height: 72)
+            DeckAnimation(name: Constants.Animations.noResults, isActive: isActive)
+                .frame(width: Glyph.illustration, height: Glyph.illustration)
         } else {
             DeckAnimation(name: Constants.Animations.paperclip, loops: true, isActive: isActive)
-                .frame(width: 72, height: 72)
+                .frame(width: Glyph.illustration, height: Glyph.illustration)
         }
     }
 }
 
-enum ItemFormatting {
-    private static let relative: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter
-    }()
+/// This stands in for the list when the history could not be read.
+struct LoadFailedView: View {
+    static let title = "Can't Load History"
+    static let message = "Close the panel. Open it again. If the problem continues, quit ClipDeck and reopen it."
 
-    static func relativeTime(_ date: Date, now: Date = Date()) -> String {
-        relative.localizedString(for: date, relativeTo: now)
-    }
-
-    static func size(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-    }
-
-    static func subtitle(for item: ClipItem) -> String {
-        let time = relativeTime(item.lastUsed)
-        switch item.kind {
-        case .text:
-            return "Text \u{00B7} \(time)"
-        case .image:
-            return "\(typeName(item.blobType)) \u{00B7} \(size(item.byteSize)) \u{00B7} \(time)"
-        case .file:
-            let path = (item.detail as NSString?)?.abbreviatingWithTildeInPath ?? ""
-            return "\(path) \u{00B7} \(time)"
+    var body: some View {
+        VStack(spacing: Space.sm) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: Glyph.state, weight: .regular))
+                .foregroundStyle(Palette.caution)
+                .frame(height: Glyph.illustration)
+                .accessibilityHidden(true)
+            Text(Self.title)
+                .deckFont(.label)
+                .foregroundStyle(Palette.textPrimary)
+                .multilineTextAlignment(.center)
+            Text(Self.message)
+                .deckFont(.caption)
+                .foregroundStyle(Palette.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    static func typeName(_ type: String?) -> String {
-        switch type {
-        case PasteboardTypes.png: return "PNG"
-        case PasteboardTypes.tiff: return "TIFF"
-        case "public.jpeg": return "JPEG"
-        case "public.heic": return "HEIC"
-        case "com.compuserve.gif": return "GIF"
-        default: return "Data"
-        }
+        .padding(.horizontal, Space.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(Self.title). \(Self.message)")
     }
 }
