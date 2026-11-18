@@ -1,8 +1,8 @@
 import AppKit
 
-/// Puts ClipDeck in the Dock while one of its windows is open and takes it back out when the
-/// last one closes. A menu bar app has no Dock icon, but a window with no Dock icon behind it
-/// is hard to find again, so the Settings and Clear History windows ask for one.
+/// ClipDeck appears in the Dock while one of its windows is open and leaves when the last one
+/// closes. A menu bar app has no Dock icon, but its windows are hard to find again without one.
+/// Thus, the Settings, Clear History, and file access windows request a Dock icon.
 @MainActor
 final class DockPresence {
     static let shared = DockPresence()
@@ -13,7 +13,7 @@ final class DockPresence {
         holders.insert(ObjectIdentifier(window))
         guard NSApp.activationPolicy() != .regular else { return }
         NSApp.setActivationPolicy(.regular)
-        // The policy change takes effect on the next activation, so activate again.
+        // Activate it again so that the policy change takes effect.
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }

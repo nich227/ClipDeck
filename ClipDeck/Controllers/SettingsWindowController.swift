@@ -2,9 +2,9 @@ import AppKit
 import Sparkle
 import SwiftUI
 
-/// It owns the Settings window, a toolbar-style tab view with one SwiftUI pane per tab. The same
-/// window opens from the menu bar, the History pane, or when the app reopens. The window returns to
-/// the last viewed pane.
+/// It owns the Settings window, a toolbar style tab view with one SwiftUI pane per tab. The same
+/// window opens from the menu bar menu, from the app menu, and when the app reopens. The window
+/// returns to the last viewed pane.
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
@@ -37,8 +37,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         return window
     }
 
-    /// A closed window keeps its SwiftUI panes alive, including the recorder monitors. Thus, the
-    /// window tears down and rebuilds the panes the next time it appears.
+    /// A closed window would otherwise keep its SwiftUI panes alive, including the recorder
+    /// monitors. Closing the window removes the panes, and showing it again rebuilds them.
     func windowWillClose(_ notification: Notification) {
         if let window { DockPresence.shared.windowDidClose(window) }
         DispatchQueue.main.async { [weak self] in

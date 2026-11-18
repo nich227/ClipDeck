@@ -18,8 +18,9 @@ struct AboutSettingsPane: View {
             Image("MenuBarIcon")
                 .renderingMode(.template)
                 .resizable()
-                .frame(width: 44, height: 44)
+                .frame(width: Glyph.mark, height: Glyph.mark)
                 .foregroundStyle(Palette.accent)
+                .accessibilityHidden(true)
             VStack(spacing: Space.xxs) {
                 Text(Constants.appName)
                     .deckFont(.wordmark)
@@ -31,12 +32,12 @@ struct AboutSettingsPane: View {
                 .font(.body)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: 360)
+                .frame(maxWidth: SettingsSection.textMeasure)
 
             if let updater {
                 VStack(spacing: Space.xs) {
                     Button("Check for Updates\u{2026}") { updater.checkForUpdates(nil) }
-                    Toggle("Automatically check for updates", isOn: $automaticChecks)
+                    Toggle("Automatically Check for Updates", isOn: $automaticChecks)
                         .toggleStyle(.checkbox)
                         .onChange(of: automaticChecks) { _, on in
                             updater.updater.automaticallyChecksForUpdates = on
@@ -52,10 +53,11 @@ struct AboutSettingsPane: View {
                 }
                 Text("MIT License. Copyright 2026 Kevin Chen.")
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(Space.xxl)
-        .frame(width: SettingsSection.width, height: SettingsSection.about.height)
+        .frame(width: SettingsSection.width)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

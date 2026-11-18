@@ -10,6 +10,10 @@ struct HistorySettingsPane: View {
     @State private var usedBytes: Int64?
     @State private var pendingApply: Task<Void, Never>?
 
+    /// The field has room for five digits and one decimal place, matching the largest limit it
+    /// accepts.
+    private static let limitFieldWidth: CGFloat = 64
+
     private var budget: StorageBudget? {
         limitEnabled ? StorageBudget(gigabytes: limitGigabytes) : nil
     }
@@ -28,7 +32,7 @@ struct HistorySettingsPane: View {
                 LabeledContent {
                     Button("Clear History\u{2026}") { ClearHistoryWindowController.shared.show() }
                 } label: {
-                    SettingLabel("Clear History", detail: "Remove items from a period of time, by kind.")
+                    SettingLabel("Clear History", detail: "Choose a time range and the kinds of items to remove.")
                 }
             }
 
@@ -36,7 +40,7 @@ struct HistorySettingsPane: View {
                 Toggle(isOn: $limitEnabled) {
                     SettingLabel(
                         "Limit Storage",
-                        detail: "When your history reaches this size, the oldest items are removed automatically."
+                        detail: "When your history reaches the maximum size, ClipDeck removes the oldest items."
                     )
                 }
                 if limitEnabled {
@@ -49,7 +53,8 @@ struct HistorySettingsPane: View {
                             )
                             .labelsHidden()
                             .multilineTextAlignment(.trailing)
-                            .frame(width: 64)
+                            .frame(width: Self.limitFieldWidth)
+                            .accessibilityLabel("Maximum size in gigabytes")
                             Text("GB")
                             Stepper(
                                 "Gigabytes",
@@ -58,6 +63,7 @@ struct HistorySettingsPane: View {
                                 step: 1
                             )
                             .labelsHidden()
+                            .accessibilityLabel("Maximum size in gigabytes")
                         }
                     } label: {
                         SettingLabel("Maximum Size")
@@ -65,6 +71,8 @@ struct HistorySettingsPane: View {
                     if let usedBytes, let budget {
                         ProgressView(value: Double(min(usedBytes, budget.bytes)), total: Double(budget.bytes))
                             .tint(Palette.accent)
+                            .accessibilityLabel("Storage used")
+                            .accessibilityValue(usageText)
                     }
                 }
             }
@@ -88,7 +96,7 @@ struct HistorySettingsPane: View {
                 )
             }
         }
-        .settingsPane(.history)
+        .settingsPane()
         .task { await refresh() }
         .onReceive(NotificationCenter.default.publisher(for: .clipHistoryDidChange)) { _ in
             Task { await refresh() }
@@ -110,8 +118,8 @@ struct HistorySettingsPane: View {
         usedBytes = try? await store.storageUsage()
     }
 
-    /// The limit takes effect only after a sequence of stepper clicks or typed digits settles.
-    /// Thus, it never reduces the history to a number that the user only passed through.
+    /// The limit takes effect only after the user stops clicking the stepper or typing digits.
+    /// Thus, it never reduces the history to a number the user entered only temporarily.
     private func scheduleApply() {
         pendingApply?.cancel()
         pendingApply = Task {

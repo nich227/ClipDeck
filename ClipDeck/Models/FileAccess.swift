@@ -1,9 +1,9 @@
 import AppKit
 
-/// The file access ClipDeck asks for at first launch. Copied files are kept as links, and the
-/// thumbnail and the missing check read the file, so each protected folder prompts once the
-/// first time ClipDeck touches it. Asking up front, in one place, avoids a surprise prompt the
-/// first time a file is copied from that folder.
+/// ClipDeck asks for file access when it first opens. Copied files stay as links. The thumbnail and
+/// missing file checks read each file, so each protected folder prompts once when ClipDeck first
+/// accesses it. Asking for access up front in one place avoids a surprise prompt when a file is
+/// first copied from that folder.
 enum FileAccess: String, CaseIterable, Identifiable, Sendable {
     case desktop
     case documents
@@ -26,11 +26,11 @@ enum FileAccess: String, CaseIterable, Identifiable, Sendable {
     var detail: String {
         switch self {
         case .desktop, .documents, .downloads:
-            return "Shows thumbnails and names for files you copy from \(title)."
+            return "This lets ClipDeck show files you copy from your \(title) folder."
         case .removableVolumes:
-            return "Shows thumbnails and names for files you copy from external drives."
+            return "This lets ClipDeck show files you copy from external drives."
         case .fullDisk:
-            return "Optional. Lets ClipDeck show files from every folder without asking again."
+            return "This is optional. It lets ClipDeck show files from every folder without asking again."
         }
     }
 
@@ -44,8 +44,8 @@ enum FileAccess: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Folder grants are made through the system prompt; Full Disk Access is a switch in System
-    /// Settings that the user flips, so it opens there instead.
+    /// The user grants folder access through the system prompt. The user grants Full Disk Access
+    /// with a switch in System Settings, so that option opens System Settings instead.
     var opensSystemSettings: Bool { self == .fullDisk }
 
     var settingsURL: URL? {
@@ -53,7 +53,8 @@ enum FileAccess: String, CaseIterable, Identifiable, Sendable {
         return URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
     }
 
-    /// The folder whose listing triggers the prompt, or a protected file for Full Disk Access.
+    /// Use the folder whose listing triggers the prompt, or use a protected file for Full Disk
+    /// Access.
     var probeURL: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         switch self {
@@ -73,11 +74,11 @@ enum FileAccessState: Equatable, Sendable {
     case undetermined
 }
 
-/// Reads and requests file access. Every call runs off the main thread, because a probe that
+/// It reads and requests file access. Every call runs off the main thread because a probe that
 /// triggers the system prompt blocks until the user answers it.
 enum FileAccessAuthorization {
-    /// Reports the state without prompting. A listing of a protected folder prompts the first
-    /// time, so this only lists the folder once a request was made; before that it reports
+    /// It reports the state without prompting. Listing a protected folder prompts the user the
+    /// first time, so it lists the folder only after an access request. Before that, it reports
     /// undetermined.
     static func state(of access: FileAccess) async -> FileAccessState {
         let url = access.probeURL
@@ -88,8 +89,8 @@ enum FileAccessAuthorization {
         return await Task.detached(priority: .utility) { canList(url) }.value ? .granted : .denied
     }
 
-    /// Triggers the system prompt for a folder by listing it, then records that it was asked.
-    /// Returns the resulting state. For Full Disk Access it opens System Settings instead.
+    /// Lists the folder to trigger the system prompt, then records the access request. Returns the
+    /// resulting state. For Full Disk Access, it opens System Settings instead.
     @discardableResult
     static func request(_ access: FileAccess) async -> FileAccessState {
         if access.opensSystemSettings {

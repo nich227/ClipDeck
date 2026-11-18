@@ -14,6 +14,9 @@ struct ClearHistoryView: View {
     @State private var isClearing = false
     @State private var errorMessage: String?
 
+    /// It fits the longest range in the popup and the count line on two lines.
+    private static let width: CGFloat = 380
+
     private var kinds: Set<ClipKind> {
         var kinds: Set<ClipKind> = []
         if includeText { kinds.insert(.text) }
@@ -30,6 +33,7 @@ struct ClearHistoryView: View {
         VStack(alignment: .leading, spacing: Space.md) {
             Text("Clear History")
                 .deckFont(.title)
+                .accessibilityAddTraits(.isHeader)
 
             Picker("Clear:", selection: $range) {
                 ForEach(ClearRange.allCases) { range in
@@ -44,10 +48,15 @@ struct ClearHistoryView: View {
                 Toggle(ClipKind.file.label, isOn: $includeFiles)
             }
             .toggleStyle(.checkbox)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Kinds of items to clear")
 
+            // The text reserves two lines, so the window keeps its height as the count arrives.
             Text(previewText)
                 .deckFont(.label)
                 .foregroundStyle(errorMessage == nil ? Palette.textSecondary : Palette.danger)
+                .lineLimit(2, reservesSpace: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack {
                 Spacer()
@@ -58,8 +67,9 @@ struct ClearHistoryView: View {
                     .disabled((matching ?? 0) == 0 || isClearing)
             }
         }
-        .padding(Space.xl)
-        .frame(width: 380)
+        .padding([.horizontal, .bottom], Space.xl)
+        .padding(.top, Space.xs)
+        .frame(width: Self.width)
         .task(id: selectionKey) { await refreshCount() }
     }
 
@@ -69,8 +79,8 @@ struct ClearHistoryView: View {
         guard let matching else { return "Counting\u{2026}" }
         switch matching {
         case 0: return "No items to clear."
-        case 1: return "1 item will be removed from your history. You can't undo this action."
-        default: return "\(matching.formatted()) items will be removed from your history. You can't undo this action."
+        case 1: return "This will remove 1 item from your history. You can't undo this action."
+        default: return "This will remove \(matching.formatted()) items from your history. You can't undo this action."
         }
     }
 
@@ -80,7 +90,7 @@ struct ClearHistoryView: View {
         do {
             matching = try await store.count(matching: ClearRequest(range: range, kinds: kinds))
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "ClipDeck couldn't count the items. \(error.explanation)"
         }
     }
 
@@ -95,7 +105,7 @@ struct ClearHistoryView: View {
                 NotificationCenter.default.post(name: .clipHistoryDidChange, object: nil)
                 onClose()
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = "ClipDeck couldn't clear your history. \(error.explanation)"
             }
         }
     }

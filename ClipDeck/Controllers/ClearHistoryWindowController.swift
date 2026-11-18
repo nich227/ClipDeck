@@ -36,7 +36,11 @@ final class ClearHistoryWindowController: NSObject, NSWindowDelegate {
     private func makeWindow(store: ClipStore) -> NSWindow {
         let view = ClearHistoryView(store: store) { [weak self] in self?.close() }
         let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+        // The view has the heading, so the title bar does not repeat it. The title still names the
+        // window in the Window menu and for VoiceOver.
         window.title = "Clear History"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
         window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
         window.delegate = self

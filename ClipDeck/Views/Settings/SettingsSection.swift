@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The Settings panes follow the toolbar order.
+/// The toolbar shows the Settings panes in the same order as the cases.
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case history
@@ -24,28 +24,21 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         }
     }
 
-    /// One width for every pane; the height is the pane's own, and the window animates between
-    /// them when the tab changes.
+    /// Every pane has the same width. Each pane is as tall as its content, and the window animates
+    /// to that height when the tab changes or a row appears.
     static let width: CGFloat = 560
-
-    var height: CGFloat {
-        switch self {
-        case .general: return 500
-        case .history: return 600
-        case .about: return 420
-        }
-    }
-
-    var size: CGSize { CGSize(width: Self.width, height: height) }
+    /// This is the maximum width of a centered line of text in About and Welcome.
+    static let textMeasure: CGFloat = 440
 }
 
 extension View {
-    /// The Settings pane uses a shared frame with a grouped form and switch toggles.
-    func settingsPane(_ section: SettingsSection) -> some View {
+    /// The Settings pane uses a grouped form with switch toggles and is sized to its content.
+    func settingsPane() -> some View {
         self
             .formStyle(.grouped)
             .toggleStyle(.switch)
-            .frame(width: SettingsSection.width, height: section.height)
+            .frame(width: SettingsSection.width)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -60,7 +53,7 @@ struct SettingLabel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: Space.xxxs) {
             Text(title)
             if let detail {
                 Text(detail)

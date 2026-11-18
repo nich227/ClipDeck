@@ -40,7 +40,7 @@ struct GeneralSettingsPane: View {
                 }
             }
         }
-        .settingsPane(.general)
+        .settingsPane()
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             loginStatus = SMAppService.mainApp.status
         }
@@ -68,13 +68,18 @@ struct GeneralSettingsPane: View {
     }
 }
 
-/// Click. Then press the new shortcut. The system refuses combinations already used by the system
-/// or by every app, and gives the reason. Press Escape to cancel.
+/// Click the button. Then press the new shortcut. The recorder refuses shortcuts that lack a
+/// required modifier key, are already used by macOS or every app, or are held by another app. It
+/// shows the reason for each refusal. Escape cancels the recording.
 private struct HotkeyRecorder: View {
     @State private var config = HotkeyConfig.load(from: .standard)
     @State private var isRecording = false
     @State private var message: String?
     @State private var monitor: Any?
+
+    /// The button is wide enough for four modifiers and a named key, so it keeps its size as the
+    /// shortcut changes.
+    private static let minimumWidth: CGFloat = 132
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
@@ -82,22 +87,29 @@ private struct HotkeyRecorder: View {
                 Button {
                     isRecording ? stop() : start()
                 } label: {
-                    Text(isRecording ? "Type shortcut" : config.display)
-                        .font(.system(size: 15, design: .monospaced))
-                        .foregroundStyle(isRecording ? Palette.accent : Color.primary)
-                        .frame(minWidth: 132)
+                    Text(isRecording ? "Press Shortcut" : config.display)
+                        .deckFont(.body)
+                        .foregroundStyle(isRecording ? Palette.accent : Palette.textPrimary)
+                        .frame(minWidth: Self.minimumWidth)
                         .padding(.vertical, Space.xxs)
                 }
-                .accessibilityLabel(isRecording ? "Recording shortcut" : "Shortcut \(config.spokenDisplay)")
-                .accessibilityHint("Click, then type a new shortcut. Press Escape to cancel.")
+                .accessibilityLabel(isRecording ? "Recording shortcut" : "Shortcut")
+                .accessibilityValue(isRecording ? "" : config.spokenDisplay)
+                .accessibilityHint("Click. Then press a new shortcut. Press Escape to cancel.")
             } label: {
-                SettingLabel("Show ClipDeck", detail: "Press this shortcut in any app to show or hide ClipDeck.")
+                SettingLabel(
+                    "Open ClipDeck",
+                    detail: isRecording
+                        ? "Press the new shortcut, or press Escape to cancel."
+                        : "Press this shortcut in any app to open or close ClipDeck."
+                )
             }
 
             if let message {
                 Label(message, systemImage: "exclamationmark.triangle")
                     .font(.callout)
                     .foregroundStyle(Palette.danger)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if !isRecording, config != .default {
@@ -133,7 +145,7 @@ private struct HotkeyRecorder: View {
         NotificationCenter.default.post(name: .hotkeyRecordingDidEnd, object: nil)
     }
 
-    /// Returns true if the recorder used the key press.
+    /// Returns true if the recorder handled the key press.
     private func handle(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let keyCode = UInt32(event.keyCode)
@@ -153,8 +165,8 @@ private struct HotkeyRecorder: View {
         case .reserved(let name):
             message = "\(candidate.display) is already used for \(name). Try a different shortcut."
         case .valid:
-            // ClipDeck releases its own shortcut while recording, so a refusal here means another
-            // app holds the combination.
+            // ClipDeck releases its own shortcut while it records the combination, so a refusal
+            // means another app holds that combination.
             guard HotkeyManager.isAvailable(candidate) else {
                 message = "\(candidate.display) is already used by another app. Try a different shortcut."
                 return true
