@@ -27,21 +27,22 @@ ClipDeck remembers everything you copy on your Mac, so you can use it again when
 - The panel appears over your work and never takes focus. Press Return to copy an item, and you're ready to paste.
 - Click the paper clip to see your ten most recent items. Click one to copy it, or press Command-1 through Command-9 and Command-0 while the menu is open.
 - After you copy, a small glass pill appears at the top of the screen with a checkmark and the item's name. It then slides away.
-- Remove items from the last hour, the last day, or all history, by kind.
+- Remove items from the last hour, the last 24 hours, the last 7 days, the last 4 weeks, or all history, by kind.
 - Choose a maximum size in gigabytes. ClipDeck removes the oldest items automatically.
 - ClipDeck uses your accent color and follows Light Mode and Dark Mode. Its icon follows the icon style you choose in System Settings.
-- ClipDeck doesn't collect any data. Passwords copied from a password manager are never saved.
-- When you first open ClipDeck, it asks for access to your Desktop, Documents, Downloads, and external drives, so it can show the files you copy from them. You can grant each one then, later, or never.
+- ClipDeck doesn't collect any data. ClipDeck never saves passwords copied from a password manager.
+- When you first open ClipDeck, it asks for access to your Desktop, Documents, Downloads, and external drives. This access lets ClipDeck show the files you copy from them. You can grant each one then, later, or never.
 
 ## Using ClipDeck
 
 | To do this | Do this |
 |---|---|
-| Show or hide ClipDeck | Press Shift-Command-C. You can change the shortcut in ClipDeck Settings > General. |
-| Search your history | Start typing. |
-| Move through items | Press the Up Arrow or Down Arrow key. |
+| Open or close ClipDeck | Press Shift-Command-C. You can change the shortcut in ClipDeck Settings > General. |
+| Search your history | Start typing. Results appear from the second character, with the item you copied most recently first. |
+| Move through items | Press the Up Arrow or Down Arrow key. Press Page Up or Page Down to move a page at a time. |
 | Copy an item | Press Return, or double-click the item. |
-| Dismiss the panel | Press Escape, or click outside the panel. |
+| Clear a search | Press Escape. |
+| Dismiss the panel | Press Escape when the search field is empty, or click outside the panel. |
 | Paste | Press Command-V in any app. |
 | Copy a recent item from the menu bar | Click the paper clip in the menu bar, then choose an item. Or press Command-1 through Command-9 for the first nine items and Command-0 for the tenth. |
 | Clear your history | Click the paper clip, then choose Clear History. |
@@ -63,14 +64,16 @@ ClipDeck keeps your history in `~/Library/Application Support/ClipDeck/`:
 | `clipdeck.sqlite` | Every item, the original formats of each text item, links to copied files, the search index, and a running count of the storage in use |
 | `blobs/` | Image data and other binary content, named by SHA-256 hash |
 | `thumbs/` | A thumbnail for each image and file, created once in the background |
+| `staging/` | Image data and thumbnails while ClipDeck writes them. ClipDeck empties it each time it opens |
 
-- ClipDeck stores text in every format it was copied in, up to 50 MB per item.
+- ClipDeck stores text in every copied format, up to 50 MB per item.
 - ClipDeck stores files as links. It remembers where each file is and follows it if you move it. If ClipDeck can't find a file, it says so. Pressing Return copies the file's path.
 - ClipDeck stores images as the image data you copied. It stores TIFF images as PNG and converts them back when you paste into an app that requires TIFF.
 - Copying the same item again moves it to the top of your history instead of adding a duplicate.
 - When Limit Storage is on, ClipDeck counts text, image data, and thumbnails toward the limit. When your history reaches the limit, ClipDeck removes the oldest items in batches. It always keeps the most recent item.
 - Clearing your history removes the items you chose and only the files that belonged to them.
 - After ClipDeck quits unexpectedly, it checks for leftover files and recounts the storage in use the next time it opens.
+- The first time ClipDeck opens a history that an earlier build made, it updates the history once. A large history can take a few seconds. The earlier build can't open the history after that.
 
 ClipDeck checks the Clipboard every 300 milliseconds by comparing a single counter. It pauses while your Mac is asleep or your screen is locked. The panel loads 100 items at a time, so it opens just as quickly with 100,000 items as with 10.
 
@@ -93,15 +96,31 @@ To run the tests:
 xcodebuild -project ClipDeck.xcodeproj -scheme ClipDeck -configuration Debug -derivedDataPath build/DerivedData test
 ```
 
-`scripts/build.sh`, `scripts/test.sh`, and `scripts/smoke-test.sh` run these commands for you. XcodeGen generates the Xcode project from `project.yml` but the repository doesn't include it.
+Run the optimized benchmarks to time the capture, thumbnail, list, copy, and menu paths. They use private pasteboards and temporary folders. A normal test run skips them:
 
-ClipDeck uses Swift Package Manager for its dependencies. [Lottie](https://github.com/airbnb/lottie-ios) plays the animations. [Sparkle](https://github.com/sparkle-project/Sparkle) delivers updates. `scripts/make-animations.py` generates the animation files, and the script defines their geometry.
+```bash
+TEST_RUNNER_CLIPDECK_BENCH=1 xcodebuild -project ClipDeck.xcodeproj -scheme ClipDeck -configuration Debug -derivedDataPath build/DerivedDataOpt SWIFT_OPTIMIZATION_LEVEL=-O SWIFT_COMPILATION_MODE=wholemodule test -only-testing:ClipDeckTests/PipelineBenchmarks 2>&1 | grep BENCH
+```
+
+To time the store over a temporary history of 100,000 items, run its benchmark the same way:
+
+```bash
+TEST_RUNNER_CLIPDECK_BENCH=1 xcodebuild -project ClipDeck.xcodeproj -scheme ClipDeck -configuration Debug -derivedDataPath build/DerivedDataOpt SWIFT_OPTIMIZATION_LEVEL=-O test -only-testing:ClipDeckTests/ClipStoreBenchmarks 2>&1 | grep BENCH
+```
+
+`scripts/build.sh` and `scripts/test.sh` run the build and the tests for you. `scripts/smoke-test.sh` opens the Debug build with a temporary history and its own pasteboard. It writes a marker string to that pasteboard and checks that ClipDeck stored it. It doesn't read or replace what you copied. To run the smoke test against your real history, pass `--real-store`. Quit ClipDeck first. In that mode, the marker replaces what you last copied. An older version of ClipDeck can't open the history afterward.
+
+XcodeGen generates the Xcode project from `project.yml` but the repository doesn't include it.
+
+ClipDeck uses Swift Package Manager for its dependencies. [Lottie](https://github.com/airbnb/lottie-ios) plays the animations. [Sparkle](https://github.com/sparkle-project/Sparkle) delivers updates. `scripts/make-animations.py` generates the animation files and defines their geometry.
 
 ## Releasing ClipDeck
 
 Push a tag such as `v1.2.0` to run `.github/workflows/release.yml`. The workflow builds ClipDeck, signs it with a Developer ID, and notarizes it. It creates a zip archive and a disk image. It then signs the archive for Sparkle. It publishes a GitHub Release and adds the release to the appcast on the `gh-pages` branch. Installed copies of ClipDeck check that appcast for updates.
 
 The workflow uses these repository secrets: `MACOS_CERTIFICATE_P12` and `MACOS_CERTIFICATE_PASSWORD` for the Developer ID certificate. It uses `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER` for notarization. It uses `SPARKLE_ED_PRIVATE_KEY`, the base64 seed that matches `SUPublicEDKey` in `ClipDeck/Info.plist`. The repository does not contain any key or certificate, and `.gitignore` excludes the common file types. Release notes go in `docs/release-notes/<version>.md` and appear in the GitHub Release and in the update window.
+
+To test the secrets without releasing, run the `check secrets` workflow by hand from the Actions tab. It checks that the Sparkle key matches the app. It signs a scratch file with the certificate. It also asks Apple to accept the API key. The release workflow makes the same Sparkle check before it builds. `APPLE_API_KEY_P8` and `MACOS_CERTIFICATE_P12` hold the base64 of the files. The Sparkle key lives in your login keychain under the account `ClipDeck`. To see the Sparkle public key, run Sparkle's `generate_keys --account ClipDeck -p`.
 
 To release from your Mac, run `scripts/package.sh <version>`. It signs with the Developer ID in your keychain and notarizes through the Apple Account you're signed in to in Xcode. You don't need to enter a password or set up a key. This method notarizes the app but not the disk image. The app inside the disk image is notarized and stapled, so it opens without a warning. To notarize the disk image as well, pass `--notarize <profile>` with a `notarytool` keychain profile.
 
