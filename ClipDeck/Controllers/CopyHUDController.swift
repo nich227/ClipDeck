@@ -15,6 +15,13 @@ final class CopyHUDController {
     private var pill: NSGlassEffectView?
     private let model = CopyHUDModel()
     private var dismissal: Task<Void, Never>?
+    private let defaults: UserDefaults
+    private let announce: @MainActor (String) -> Void
+
+    init(defaults: UserDefaults = .standard, announce: @escaping @MainActor (String) -> Void = CopyHUDController.announce) {
+        self.defaults = defaults
+        self.announce = announce
+    }
 
     private var pillSize: NSSize { NSSize(width: Constants.HUD.width, height: Constants.HUD.height) }
     /// The height accommodates the pill plus the distance it travels from above the screen edge.
@@ -23,11 +30,14 @@ final class CopyHUDController {
     private var hiddenOrigin: NSPoint { NSPoint(x: 0, y: windowSize.height) }
 
     func show(for item: ClipItem) {
-        guard UserDefaults.standard.object(forKey: Constants.showCopyConfirmationKey) as? Bool ?? true else { return }
+        let title = MenuFormatting.title(for: item)
+        // The setting turns off the pill. VoiceOver still says what was copied.
+        announce("Copied \(title)")
+        guard defaults.object(forKey: Constants.showCopyConfirmationKey) as? Bool ?? true else { return }
         let panel = self.panel ?? makePanel()
         self.panel = panel
         panel.setFrame(frameOnMouseScreen(), display: false)
-        model.title = MenuFormatting.title(for: item)
+        model.title = title
         model.run += 1
         model.visible = true
         panel.orderFrontRegardless()
@@ -41,11 +51,21 @@ final class CopyHUDController {
         }
     }
 
+    /// The pill takes no focus, so VoiceOver announces the confirmation.
+    static func announce(_ message: String) {
+        guard NSWorkspace.shared.isVoiceOverEnabled else { return }
+        NSAccessibility.post(
+            element: NSApp as Any,
+            notification: .announcementRequested,
+            userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.high.rawValue]
+        )
+    }
+
     private func hide() {
         model.visible = false
         move(to: hiddenOrigin, alpha: 0, spring: .depart)
         Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(500))
+            try? await Task.sleep(for: Constants.HUD.orderOutDelay)
             guard let self, !model.visible else { return }
             panel?.orderOut(nil)
         }
@@ -129,12 +149,9 @@ final class CopyHUDController {
         return panel
     }
 
-    /// It is centered at the top of the screen that contains the mouse pointer, just under the menu
-    /// bar.
+    /// It is centered just under the menu bar on the screen that contains the mouse pointer.
     private func frameOnMouseScreen() -> NSRect {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let visible = NSScreen.visibleFrameUnderMouse
         return NSRect(
             x: visible.midX - windowSize.width / 2, y: visible.maxY - windowSize.height,
             width: windowSize.width, height: windowSize.height
@@ -159,7 +176,7 @@ struct CopyHUDView: View {
             DeckAnimation(name: Constants.Animations.copied, isActive: model.visible)
                 .id(model.run)
                 .frame(width: Constants.HUD.checkSide, height: Constants.HUD.checkSide)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: Space.xxxs) {
                 Text("Copied")
                     .deckFont(.label)
                     .foregroundStyle(Palette.textPrimary)

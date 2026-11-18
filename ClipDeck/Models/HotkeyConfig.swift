@@ -46,7 +46,7 @@ struct HotkeyConfig: Codable, Equatable, Sendable {
 
     enum Validation: Equatable {
         case valid
-        /// Shift alone types a capital letter, so a shortcut needs Command, Option or Control.
+        /// Shift alone types a capital letter, so a shortcut needs Command, Option, or Control.
         case needsModifier
         case reserved(String)
     }
@@ -109,7 +109,7 @@ struct HotkeyConfig: Codable, Equatable, Sendable {
             (kVK_Space, cmdOption, "Finder Search"),
             (kVK_ANSI_Q, cmdControl, "Lock Screen"),
             (kVK_ANSI_F, cmdControl, "Full Screen"),
-            (kVK_Space, cmdControl, "Emoji and Symbols"),
+            (kVK_Space, cmdControl, "Emoji & Symbols"),
             (kVK_Space, controlKey, "Input Sources"),
         ]
         var table: [Combo: String] = [:]
@@ -121,8 +121,8 @@ struct HotkeyConfig: Codable, Equatable, Sendable {
 
     // MARK: - Key labels
 
-    /// The printed label for a named key is its name. For all other keys, the label is the
-    /// character the key types without modifiers.
+    /// A named key uses its name as the printed label. Every other key uses the character it types
+    /// without modifiers.
     static func keyLabel(keyCode: UInt32, characters: String?) -> String {
         if let name = namedKeys[Int(keyCode)] { return name }
         return (characters ?? "").uppercased()

@@ -13,17 +13,17 @@ final class HotkeyManager {
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
     private(set) var current: HotkeyConfig?
-    /// We keep the last registered shortcut across `unregister()` so that the system can fall back
-    /// to it if a change fails.
+    /// This is the last shortcut that registered. `unregister()` keeps it, so `register` can fall
+    /// back to it when a change fails.
     private var lastWorking: HotkeyConfig?
 
     init(onPress: @escaping @MainActor () -> Void) {
         self.onPress = onPress
     }
 
-    /// Registers `config`. If the system refuses that configuration, ClipDeck registers the last
-    /// working shortcut (or the default) again, so a shortcut remains registered. The operation
-    /// returns false.
+    /// Registers `config` and returns true. If the system refuses `config`, it registers the last
+    /// working shortcut (or the default) again and returns false. Thus, a shortcut remains
+    /// registered.
     @discardableResult
     func register(_ config: HotkeyConfig) -> Bool {
         installHandlerIfNeeded()

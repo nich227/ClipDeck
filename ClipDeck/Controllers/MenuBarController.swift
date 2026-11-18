@@ -4,8 +4,9 @@ import Sparkle
 import UniformTypeIdentifiers
 
 /// The menu bar item shows the most recent items for one-click copying, then the app's commands.
-/// When the history changes, the app refreshes the rows with one indexed read of ten rows.
-/// Thumbnails load only while the menu is open.
+/// When the history changes, the app refreshes the rows with one indexed read of ten rows. Changes
+/// that arrive while a read is in flight share one more read. Thumbnails load only while the menu
+/// is open.
 @MainActor
 final class MenuBarController: NSObject, NSMenuDelegate {
     struct Actions {
@@ -16,31 +17,47 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     private let store: ClipStore
+    private let fetchRecent: @MainActor () async throws -> [ClipItem]
     private let actions: Actions
     /// The menu's Check for Updates row targets this directly, so Sparkle enables and disables it
     /// through menu validation.
     private let updater: SPUStandardUpdaterController?
-    private let statusItem: NSStatusItem
-    private let menu = NSMenu()
-    private var recent: [ClipItem] = []
+    /// This is nil when tests create the controller without a status bar.
+    private let statusItem: NSStatusItem?
+    let menu = NSMenu()
+    private(set) var recent: [ClipItem] = []
     private var observers: [ObserverToken] = []
     private var iconLoads: Task<Void, Never>?
+    private var needsRefresh = false
+    private var refreshRunner: Task<Void, Never>?
+    /// The menu reuses row icons drawn from a thumbnail or file type, so reopening it does not
+    /// build them again. `refreshRecent` drops thumbnail icons for rows that left the menu.
+    private var thumbnailIcons: [String: NSImage] = [:]
+    private var typeIcons: [String: NSImage] = [:]
+    private var symbolIcons: [String: NSImage] = [:]
 
-    init(store: ClipStore, actions: Actions, updater: SPUStandardUpdaterController?) {
+    init(
+        store: ClipStore,
+        actions: Actions,
+        updater: SPUStandardUpdaterController?,
+        statusBar: NSStatusBar? = .system,
+        fetchRecent: (@MainActor () async throws -> [ClipItem])? = nil
+    ) {
         self.store = store
+        self.fetchRecent = fetchRecent ?? { try await store.page(limit: Constants.Menu.recentCount) }
         self.actions = actions
         self.updater = updater
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = statusBar?.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
 
-        if let button = statusItem.button {
+        if let button = statusItem?.button {
             let icon = NSImage(named: "MenuBarIcon")
             icon?.isTemplate = true
             button.image = icon
             button.toolTip = Constants.appName
         }
         menu.delegate = self
-        statusItem.menu = menu
+        statusItem?.menu = menu
         applyVisibility()
 
         let center = NotificationCenter.default
@@ -95,15 +112,16 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         loadThumbnails()
     }
 
-    /// A recent row. Its key equivalent, Command plus a digit, renders in the menu's own gray on
-    /// the right and works while the menu is open.
+    /// A recent row shows its key equivalent, Command plus a digit, in the menu's own gray on the
+    /// right. It works while the menu is open.
     private func row(for item: ClipItem, key: String) -> NSMenuItem {
-        let row = NSMenuItem(title: MenuFormatting.title(for: item), action: #selector(copyRow(_:)), keyEquivalent: key)
+        let title = MenuFormatting.title(for: item)
+        let row = NSMenuItem(title: title, action: #selector(copyRow(_:)), keyEquivalent: key)
         row.keyEquivalentModifierMask = .command
         row.target = self
         row.representedObject = item.id
         row.image = placeholderIcon(for: item)
-        row.toolTip = MenuFormatting.tooltip(for: item)
+        row.toolTip = MenuFormatting.tooltip(for: item, title: title)
         return row
     }
 
@@ -113,8 +131,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         return item
     }
 
-    /// Shows the global shortcut on a menu item the way the menu shows every other shortcut. The
-    /// shortcut itself is registered with Carbon, so the menu item is only its display.
+    /// Shows the global shortcut on a menu item like every other menu shortcut. Carbon registers
+    /// the shortcut itself, so the menu item only displays it.
     static func applyShortcut(_ config: HotkeyConfig, to item: NSMenuItem) {
         guard let key = Self.menuKeyEquivalent(for: config) else { return }
         item.keyEquivalent = key
@@ -126,7 +144,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         item.keyEquivalentModifierMask = mask
     }
 
-    /// The character a menu key equivalent needs, or nil for a key the menu cannot show.
+    /// This is the character for a menu key equivalent, or nil if the menu cannot show the key.
     static func menuKeyEquivalent(for config: HotkeyConfig) -> String? {
         func function(_ key: Int) -> String { UnicodeScalar(key).map { String(Character($0)) } ?? "" }
         let special: [Int: String] = [
@@ -143,45 +161,82 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     /// While a row's thumbnail decodes, the row shows a cached thumbnail if one exists. Otherwise,
     /// it shows the file type's icon or the kind's glyph. None of these options accesses the disk.
     private func placeholderIcon(for item: ClipItem) -> NSImage? {
-        if item.kind != .text, let cached = ThumbnailCache.shared.cachedImage(for: item.hash) {
-            return MenuIcon.square(cached)
-        }
+        if item.kind != .text, let icon = thumbnailIcon(for: item.hash) { return icon }
         switch item.kind {
         case .text, .image:
-            return MenuIcon.symbol(item.kind.systemImage)
+            return symbolIcon(item.kind.systemImage)
         case .file:
-            let type = item.fileURL.flatMap { UTType(filenameExtension: $0.pathExtension) }
-            return type.map { MenuIcon.square(NSWorkspace.shared.icon(for: $0)) } ?? MenuIcon.symbol(item.kind.systemImage)
+            return typeIcon(forExtension: item.fileURL?.pathExtension ?? "") ?? symbolIcon(item.kind.systemImage)
         }
     }
 
-    /// This decodes and replaces each missing row thumbnail one at a time while the menu is open.
-    /// Closing the menu cancels the process.
+    private func thumbnailIcon(for hash: String) -> NSImage? {
+        if let icon = thumbnailIcons[hash] { return icon }
+        guard let cached = ThumbnailCache.shared.cachedImage(for: hash, maxPixelSize: Constants.Menu.iconPixelSize)
+            ?? ThumbnailCache.shared.cachedImage(for: hash) else { return nil }
+        let icon = MenuIcon.square(cached)
+        thumbnailIcons[hash] = icon
+        return icon
+    }
+
+    private func symbolIcon(_ name: String) -> NSImage? {
+        if let icon = symbolIcons[name] { return icon }
+        let icon = MenuIcon.symbol(name)
+        symbolIcons[name] = icon
+        return icon
+    }
+
+    private func typeIcon(forExtension pathExtension: String) -> NSImage? {
+        if let icon = typeIcons[pathExtension] { return icon }
+        guard let type = UTType(filenameExtension: pathExtension) else { return nil }
+        if typeIcons.count >= Constants.Menu.typeIconLimit { typeIcons.removeAll() }
+        let icon = MenuIcon.square(NSWorkspace.shared.icon(for: type))
+        typeIcons[pathExtension] = icon
+        return icon
+    }
+
+    /// The process decodes and replaces each missing row thumbnail one at a time while the menu is
+    /// open. Closing the menu cancels it.
     private func loadThumbnails() {
         iconLoads?.cancel()
-        let pending = recent.filter { $0.kind != .text && !$0.isMissing && ThumbnailCache.shared.cachedImage(for: $0.hash) == nil }
+        let pending = recent.filter { $0.kind != .text && !$0.isMissing && thumbnailIcons[$0.hash] == nil }
         guard !pending.isEmpty else { return }
         iconLoads = Task { [weak self] in
             for item in pending {
                 guard let self, !Task.isCancelled else { return }
                 let url = store.location.thumbnailURL(for: item.hash)
-                guard let image = await ThumbnailCache.shared.image(for: item.hash, at: url), !Task.isCancelled else { continue }
-                menu.items.first { $0.representedObject as? Int64 == item.id }?.image = MenuIcon.square(image)
+                let image = await ThumbnailCache.shared.image(for: item.hash, at: url, maxPixelSize: Constants.Menu.iconPixelSize)
+                guard let image, !Task.isCancelled else { continue }
+                let icon = MenuIcon.square(image)
+                thumbnailIcons[item.hash] = icon
+                menu.items.first { $0.representedObject as? Int64 == item.id }?.image = icon
             }
         }
     }
 
     // MARK: - State
 
+    /// One read runs at a time. One more read handles every change that arrives during the first
+    /// read, so a burst costs two reads instead of one per change.
     private func refreshRecent() {
-        Task { [weak self] in
-            guard let self, let rows = try? await store.page(limit: Constants.Menu.recentCount) else { return }
+        needsRefresh = true
+        guard refreshRunner == nil else { return }
+        refreshRunner = Task { [weak self] in await self?.runRefreshes() }
+    }
+
+    private func runRefreshes() async {
+        defer { refreshRunner = nil }
+        while needsRefresh {
+            needsRefresh = false
+            guard let rows = try? await fetchRecent(), rows != recent else { continue }
             recent = rows
+            let shown = Set(rows.map(\.hash))
+            thumbnailIcons = thumbnailIcons.filter { shown.contains($0.key) }
         }
     }
 
     private func applyVisibility() {
-        statusItem.isVisible = UserDefaults.standard.object(forKey: Constants.showMenuBarIconKey) as? Bool ?? true
+        statusItem?.isVisible = UserDefaults.standard.object(forKey: Constants.showMenuBarIconKey) as? Bool ?? true
     }
 
     // MARK: - Actions
@@ -200,7 +255,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 /// Each menu row icon uses `Constants.Menu.iconSide` for its width and height.
 enum MenuIcon {
     static func symbol(_ name: String) -> NSImage? {
-        let configuration = NSImage.SymbolConfiguration(pointSize: Constants.Menu.iconSide - 4, weight: .regular)
+        let configuration = NSImage.SymbolConfiguration(pointSize: Glyph.inline, weight: .regular)
         return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
     }
 

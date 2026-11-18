@@ -16,14 +16,15 @@ enum MenuFormatting {
         return item.isMissing ? "\(shortened) (Not Found)" : shortened
     }
 
-    /// Hover over the row to see the file's path or any text that does not fit in the title.
-    static func tooltip(for item: ClipItem) -> String? {
+    /// Hover over the row to see the file's path or any text that does not fit in the title. Pass
+    /// the row's title when it is already available to avoid building the title twice.
+    static func tooltip(for item: ClipItem, title: String? = nil) -> String? {
         switch item.kind {
         case .file:
             return item.detail
         case .text:
             let preview = item.preview.trimmingCharacters(in: .whitespacesAndNewlines)
-            return preview.count > title(for: item).count ? preview : nil
+            return preview.count > (title ?? self.title(for: item)).count ? preview : nil
         case .image:
             return nil
         }

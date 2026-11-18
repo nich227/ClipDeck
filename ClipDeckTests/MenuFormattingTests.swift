@@ -49,4 +49,17 @@ final class MenuFormattingTests: XCTestCase {
         let long = String(repeating: "word ", count: 40)
         XCTAssertEqual(MenuFormatting.tooltip(for: item(kind: .text, title: long, preview: long)), long.trimmingCharacters(in: .whitespaces))
     }
+
+    func testTooltipWithTheTitleAtHandIsTheSame() {
+        let long = String(repeating: "word ", count: 40)
+        let items = [
+            item(kind: .text, title: long, preview: long),
+            item(kind: .text, title: "short", preview: "short"),
+            item(kind: .file, title: "report.pdf", detail: "/Users/me/report.pdf"),
+            item(kind: .image, title: "Image 4\u{00D7}3"),
+        ]
+        for item in items {
+            XCTAssertEqual(MenuFormatting.tooltip(for: item, title: MenuFormatting.title(for: item)), MenuFormatting.tooltip(for: item))
+        }
+    }
 }
