@@ -1,7 +1,7 @@
 import Foundation
 
-/// An active reason pauses capture. Polling runs only when no reason is active, so a wake while the
-/// screen is still locked does not restart polling.
+/// An active reason pauses capture. Polling runs only when no reason is active, so it does not
+/// restart if the Mac wakes while the screen is still locked.
 struct PauseReasons: OptionSet, Sendable {
     let rawValue: Int
 

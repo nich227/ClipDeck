@@ -25,7 +25,7 @@ enum ClipKind: Int, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// The list shows one history row. That row never carries the full payload.
+/// This is one history row as the list shows it. It never carries the full payload.
 struct ClipItem: Identifiable, Equatable, Sendable {
     let id: Int64
     let hash: String
@@ -35,7 +35,7 @@ struct ClipItem: Identifiable, Equatable, Sendable {
     let title: String
     /// The value is the first file's path if files are present. Otherwise, it is nil.
     let detail: String?
-    /// The start of the searchable text contains enough content for one row.
+    /// The start of the searchable text. It holds enough text for one row.
     let preview: String
     let byteSize: Int64
     let blobType: String?
@@ -59,7 +59,7 @@ struct PageCursor: Equatable, Sendable {
     }
 }
 
-/// This has everything needed to put an item back on the pasteboard.
+/// This has everything needed to return an item to the pasteboard.
 struct ClipPayload: Sendable {
     let kind: ClipKind
     let plainText: String?

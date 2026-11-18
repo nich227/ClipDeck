@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 import XCTest
 @testable import ClipDeck
 
-/// The shared builders support pasteboard snapshots and captures.
+/// Shared builders make pasteboard snapshots and captures for the tests.
 enum Fixtures {
     static func snapshot(_ items: [[String: Data]]) -> PasteboardSnapshot {
         PasteboardSnapshot(items: items.map { payload in

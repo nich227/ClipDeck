@@ -33,12 +33,22 @@ struct EvictionCandidate: Equatable, Sendable {
     let id: Int64
     let hash: String
     let bytes: Int64
+    let hasBlob: Bool
+    let hasThumbnail: Bool
+
+    init(id: Int64, hash: String, bytes: Int64, hasBlob: Bool = true, hasThumbnail: Bool = true) {
+        self.id = id
+        self.hash = hash
+        self.bytes = bytes
+        self.hasBlob = hasBlob
+        self.hasThumbnail = hasThumbnail
+    }
 }
 
 enum EvictionPlan {
     /// Selects enough rows for removal to free at least `excess` bytes. `candidates` must list the
-    /// oldest rows first. The newest row is never selected, so the latest copy survives even when
-    /// it alone exceeds the limit.
+    /// oldest rows first. It never selects the newest row, so the latest copy survives even when it
+    /// alone exceeds the limit.
     static func select(from candidates: [EvictionCandidate], excess: Int64, keeping newestID: Int64) -> [EvictionCandidate] {
         guard excess > 0 else { return [] }
         var freed: Int64 = 0

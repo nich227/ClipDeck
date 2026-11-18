@@ -20,7 +20,7 @@ enum ClearRange: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// The range extends back by this amount. Nil means there is no limit.
+    /// The range extends this far into the past. Nil means there is no limit.
     var interval: TimeInterval? {
         switch self {
         case .lastHour: return 60 * 60
