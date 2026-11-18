@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>ClipDeck</title>
+    <link>https://github.com/nich227/ClipDeck</link>
+    <description>ClipDeck updates</description>
+    <language>en</language>
+    <!-- items -->
+    <item>
+      <title>1.0.0</title>
+      <pubDate>Wed, 18 Nov 2026 06:22:01 GMT</pubDate>
+      <sparkle:version>10000</sparkle:version>
+      <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description>
+        <![CDATA[
+      <h3>What's new</h3>
+      <ul>
+      <li>ClipDeck keeps your entire clipboard history with no limit. Search as you type, and paste items with their original formatting.</li>
+      <li>Press Shift-Command-C to show your history in a Liquid Glass panel over whatever you're doing without taking focus from your app.</li>
+      <li>Click the paper clip in the menu bar, then click an item to copy it.</li>
+      <li>Choose a maximum storage size, and ClipDeck removes the oldest items automatically.</li>
+      </ul>
+      <h3>Installing</h3>
+      <p>Open the disk image and drag ClipDeck to the Applications folder. Requires macOS 26 or later.</p>
+      <p>
+        <a href="https://github.com/nich227/ClipDeck/releases/tag/v1.0.0">All the details for 1.0.0</a>
+      </p>
+        ]]>
+      </description>
+      <enclosure url="https://github.com/nich227/ClipDeck/releases/download/v1.0.0/ClipDeck-1.0.0.zip" length="6374790" type="application/octet-stream" sparkle:edSignature="6qAc/xzBpZ2jrnQ1aitOHuGJH3YQR1Xsf+OZx4AACNwFR6Aaf6oh7Mv8MG3gELzLVLEM8PMUBr+8/646sq1tDQ=="/>
+    </item>
+  </channel>
+</rss>
