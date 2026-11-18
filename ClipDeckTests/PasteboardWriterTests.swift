@@ -125,4 +125,64 @@ final class PasteboardWriterTests: XCTestCase {
         XCTAssertEqual(pasteboard.string(forType: .string), path)
         XCTAssertTrue(types().contains(PasteboardTypes.fileURL))
     }
+
+    // MARK: - Prepared writes
+
+    func testPreparingFilesKeepsTheirOrderAndFindsTheMissingOne() throws {
+        let directory = Fixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var files: [FileReference] = []
+        for index in 0..<120 {
+            let url = directory.appendingPathComponent("file \(index).txt")
+            try Data("x".utf8).write(to: url)
+            files.append(FileReference(path: url.path, bookmark: PasteboardClassifier.bookmark(for: url)))
+        }
+        let present = ClipPayload(kind: .file, plainText: nil, representations: [], files: files, blob: nil)
+        let prepared = PasteboardWriter.prepare(present)
+        XCTAssertEqual(prepared.fileURLs.map { $0.resolvingSymlinksInPath().path }, files.map { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath().path })
+        XCTAssertFalse(prepared.hasMissingFile)
+
+        let gone = FileReference(path: "/nonexistent/\(UUID().uuidString)/gone.mov", bookmark: nil)
+        let mixed = ClipPayload(kind: .file, plainText: nil, representations: [], files: files + [gone], blob: nil)
+        let preparedMixed = PasteboardWriter.prepare(mixed)
+        XCTAssertEqual(preparedMixed.fileURLs.count, 121)
+        XCTAssertEqual(preparedMixed.fileURLs.last?.path, gone.path)
+        XCTAssertTrue(preparedMixed.hasMissingFile)
+    }
+
+    func testAPreparedWritePutsTheSameItemsOnThePasteboard() throws {
+        let directory = Fixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = try (0..<12).map { index -> URL in
+            let url = directory.appendingPathComponent("item \(index).txt")
+            try Data("x".utf8).write(to: url)
+            return url
+        }
+        let payload = ClipPayload(
+            kind: .file, plainText: nil, representations: [],
+            files: urls.map { FileReference(path: $0.path, bookmark: PasteboardClassifier.bookmark(for: $0)) }, blob: nil
+        )
+        XCTAssertNotNil(PasteboardWriter.write(PasteboardWriter.prepare(payload), to: pasteboard))
+        XCTAssertEqual(pasteboard.pasteboardItems?.count, 12)
+        let written = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL]
+        XCTAssertEqual(written?.map { $0.resolvingSymlinksInPath().path }, urls.map { $0.resolvingSymlinksInPath().path })
+        XCTAssertNil(pasteboard.string(forType: .string))
+    }
+
+    func testPreparingTextOrAnImageResolvesNoFiles() {
+        let text = ClipPayload(kind: .text, plainText: "plain", representations: [], files: [], blob: nil)
+        let prepared = PasteboardWriter.prepare(text)
+        XCTAssertTrue(prepared.fileURLs.isEmpty)
+        XCTAssertFalse(prepared.hasMissingFile)
+        XCTAssertNotNil(PasteboardWriter.write(prepared, to: pasteboard))
+        XCTAssertEqual(pasteboard.string(forType: .string), "plain")
+    }
+
+    func testAFilePayloadWithNoFilesWritesNothing() {
+        pasteboard.clearContents()
+        pasteboard.setString("untouched", forType: .string)
+        let payload = ClipPayload(kind: .file, plainText: nil, representations: [], files: [], blob: nil)
+        XCTAssertNil(PasteboardWriter.write(payload, to: pasteboard))
+        XCTAssertEqual(pasteboard.string(forType: .string), "untouched")
+    }
 }

@@ -1,10 +1,44 @@
 import AppKit
 
 /// Restores a stored item to a pasteboard with the same types used when it was copied.
+///
+/// The work has two steps. `prepare` resolves bookmarks and checks which files exist. It reads the
+/// disk one or more times per file, so it runs off the main thread. `write` only hands finished
+/// values to the pasteboard.
 enum PasteboardWriter {
+    /// All files in this payload are resolved, so writing it does not access the disk.
+    struct Prepared: Sendable {
+        let payload: ClipPayload
+        let fileURLs: [URL]
+        let hasMissingFile: Bool
+    }
+
+    static func prepare(_ payload: ClipPayload) -> Prepared {
+        guard payload.kind == .file, !payload.files.isEmpty else {
+            return Prepared(payload: payload, fileURLs: [], hasMissingFile: false)
+        }
+        let files = payload.files
+        var resolved = [(url: URL, exists: Bool)?](repeating: nil, count: files.count)
+        resolved.withUnsafeMutableBufferPointer { resolved in
+            // Each iteration writes only its own slot.
+            DispatchQueue.concurrentPerform(iterations: files.count) { index in
+                let url = resolve(files[index])
+                resolved[index] = (url, FileManager.default.fileExists(atPath: url.path))
+            }
+        }
+        let found = resolved.compactMap { $0 }
+        return Prepared(payload: payload, fileURLs: found.map(\.url), hasMissingFile: found.contains { !$0.exists })
+    }
+
     /// Returns the change count the write produced, or nil when nothing was written.
     @discardableResult
     static func write(_ payload: ClipPayload, to pasteboard: NSPasteboard) -> Int? {
+        write(prepare(payload), to: pasteboard)
+    }
+
+    @discardableResult
+    static func write(_ prepared: Prepared, to pasteboard: NSPasteboard) -> Int? {
+        let payload = prepared.payload
         switch payload.kind {
         case .text:
             let item = NSPasteboardItem()
@@ -29,7 +63,7 @@ enum PasteboardWriter {
             return replaceContents(of: pasteboard, with: [item])
 
         case .file:
-            let urls = payload.files.map(resolve)
+            let urls = prepared.fileURLs
             guard let firstURL = urls.first else { return nil }
             let items = urls.map { url -> NSPasteboardItem in
                 let item = NSPasteboardItem()
@@ -37,7 +71,7 @@ enum PasteboardWriter {
                 return item
             }
             // You can still paste a missing file using its path.
-            if urls.contains(where: { !FileManager.default.fileExists(atPath: $0.path) }) {
+            if prepared.hasMissingFile {
                 items.first?.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
             }
             Log.panel.debug("Writing \(urls.count) file references starting with \(firstURL.lastPathComponent, privacy: .private)")

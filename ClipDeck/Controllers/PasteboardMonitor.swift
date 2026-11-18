@@ -15,8 +15,8 @@ final class PasteboardMonitor: @unchecked Sendable {
     private var gate = PollingGate()
     private var isStarted = false
 
-    /// ClipDeck splits its writes between the writing thread and `queue` so neither waits for the
-    /// other.
+    /// This contains the state of ClipDeck's own writes. The writing thread and `queue` share it
+    /// under a lock, so neither waits for the other's work.
     private let ownWrites = OSAllocatedUnfairLock(initialState: OwnWrites())
 
     // Use the main thread only.

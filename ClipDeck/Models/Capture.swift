@@ -12,7 +12,7 @@ struct FileReference: Equatable, Sendable {
     var name: String { (path as NSString).lastPathComponent }
 }
 
-/// The classified pasteboard is ready to be stored.
+/// The classified pasteboard is ready for storage.
 struct Capture: Equatable, Sendable {
     let kind: ClipKind
     let hash: String
@@ -21,12 +21,12 @@ struct Capture: Equatable, Sendable {
     /// This content is indexed for search. For text items, this is the plain text itself.
     let searchText: String
     let byteSize: Int64
-    /// The operation writes the item's other payloads alongside the main payload. For text items,
-    /// it does not write back plain text. It rebuilds plain text from `searchText` when
+    /// The item's other payloads are written back with the main payload. For a text item, they do
+    /// not include the plain text. ClipDeck rebuilds the plain text from `searchText` when
     /// `offersPlainText` is set.
     let representations: [PasteboardRepresentation]
-    /// The pasteboard offered plain text itself. This is false when the text was derived from RTF
-    /// or HTML, so the derived text is not written back as if it were original.
+    /// It is true when the pasteboard itself offered plain text. It is false when the text was
+    /// derived from RTF or HTML, so the derived text is not written back as if it were original.
     let offersPlainText: Bool
     let files: [FileReference]
     /// A content-addressed file stores image bytes or other binary data.
@@ -36,8 +36,8 @@ struct Capture: Equatable, Sendable {
     let offersTIFF: Bool
 }
 
-/// This provides a read-only view of a pasteboard. The view reads data on demand, so classification
-/// can stop before reading a payload that classification will refuse.
+/// This is a read-only view of a pasteboard. The view reads data on demand, so classification can
+/// stop before reading a payload it will refuse.
 struct PasteboardSnapshot {
     struct Item {
         let types: [String]
@@ -65,6 +65,7 @@ enum PasteboardTypes {
     static let fileURL = "public.file-url"
     static let png = "public.png"
     static let tiff = "public.tiff"
-    /// Image types remain unchanged if no PNG is provided.
+    /// These image types are stored as they are. The classifier uses them only when the pasteboard
+    /// offers no PNG and no TIFF.
     static let otherImages = ["public.jpeg", "public.heic", "com.compuserve.gif"]
 }

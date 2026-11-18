@@ -42,15 +42,10 @@ struct PasteboardClassifier {
     // MARK: - Files
 
     private func classifyFiles(_ items: [PasteboardSnapshot.Item]) -> Classification {
-        let paths = items.compactMap { item -> String? in
-            guard let data = item.data(PasteboardTypes.fileURL),
-                  let url = URL(dataRepresentation: data, relativeTo: nil),
-                  url.isFileURL else { return nil }
-            return url.standardizedFileURL.path
-        }
+        let files = references(from: items.compactMap { $0.data(PasteboardTypes.fileURL) })
+        let paths = files.map(\.reference.path)
         guard let firstPath = paths.first else { return .skip(.empty) }
 
-        let files = paths.map { FileReference(path: $0, bookmark: makeBookmark(URL(fileURLWithPath: $0))) }
         let canonical = paths.sorted().joined(separator: "\n")
         let firstName = (firstPath as NSString).lastPathComponent
         let title = paths.count == 1 ? firstName : "\(firstName) and \(paths.count - 1) more"
@@ -60,13 +55,38 @@ struct PasteboardClassifier {
             title: title,
             detail: firstPath,
             searchText: paths.joined(separator: "\n"),
-            byteSize: paths.reduce(0) { $0 + fileSize($1) },
+            byteSize: files.reduce(0) { $0 + $1.size },
             representations: [],
             offersPlainText: false,
-            files: files,
+            files: files.map(\.reference),
             blob: nil,
             offersTIFF: false
         ))
+    }
+
+    private struct SizedReference {
+        let reference: FileReference
+        let size: Int64
+    }
+
+    /// A path, a bookmark, and a size cost several system calls per file, so a large selection
+    /// spreads them over the cores. `makeBookmark` and `fileSize` must be safe to call from several
+    /// threads at once. The result keeps the pasteboard order and leaves out anything that is not a
+    /// file URL.
+    private func references(from payloads: [Data]) -> [SizedReference] {
+        var slots = [SizedReference?](repeating: nil, count: payloads.count)
+        slots.withUnsafeMutableBufferPointer { slots in
+            // Each iteration writes only its own slot.
+            DispatchQueue.concurrentPerform(iterations: payloads.count) { index in
+                guard let url = URL(dataRepresentation: payloads[index], relativeTo: nil), url.isFileURL else { return }
+                let path = url.standardizedFileURL.path
+                slots[index] = SizedReference(
+                    reference: FileReference(path: path, bookmark: makeBookmark(URL(fileURLWithPath: path))),
+                    size: fileSize(path)
+                )
+            }
+        }
+        return slots.compactMap { $0 }
     }
 
     // MARK: - Text
@@ -92,14 +112,15 @@ struct PasteboardClassifier {
         if plain == nil {
             plain = Self.plainText(fromRepresentations: representations)
         }
-        guard let text = plain, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return .skip(.empty)
-        }
+        guard let text = plain else { return .skip(.empty) }
+        let title = Self.firstLine(of: text)
+        // A text with no first line is only spaces and line breaks.
+        guard !title.isEmpty else { return .skip(.empty) }
 
         return .capture(Capture(
             kind: .text,
-            hash: ContentHash.sha256(tag: "text", Data(text.utf8)),
-            title: Self.firstLine(of: text),
+            hash: Self.hash(ofText: text),
+            title: title,
             detail: nil,
             searchText: text,
             byteSize: Int64(total),
@@ -109,6 +130,16 @@ struct PasteboardClassifier {
             blob: nil,
             offersTIFF: false
         ))
+    }
+
+    /// It hashes the text's existing UTF-8 bytes, so it does not copy a large text only to hash it.
+    static func hash(ofText text: String) -> String {
+        var text = text
+        return text.withUTF8 { buffer in
+            guard let base = buffer.baseAddress else { return ContentHash.sha256(tag: "text", Data()) }
+            let bytes = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: base), count: buffer.count, deallocator: .none)
+            return ContentHash.sha256(tag: "text", bytes)
+        }
     }
 
     private static func plainText(fromRepresentations representations: [PasteboardRepresentation]) -> String? {
@@ -131,11 +162,66 @@ struct PasteboardClassifier {
         return nil
     }
 
+    /// The first line that contains a non-space character is trimmed and cut to `titleCharacters`.
+    /// The result is empty when the text contains only spaces and line breaks. The work stops at
+    /// the end of that line or shortly after the cut, whichever comes first. Thus, the cost does
+    /// not grow with the text.
     static func firstLine(of text: String) -> String {
-        let line = text.split(whereSeparator: \.isNewline)
-            .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-        return String(line.prefix(200))
+        let scalars = text.unicodeScalars
+        guard let start = scalars.firstIndex(where: { !isLineBreak($0) && !isSpace($0) }) else { return "" }
+
+        var end = start
+        var scanned = 0
+        while end < scalars.endIndex, scanned < titleWindow, !isLineBreak(scalars[end]) {
+            scalars.formIndex(after: &end)
+            scanned += 1
+        }
+        let head = String(scalars[start..<end])
+        let lineEndsInWindow = end == scalars.endIndex || isLineBreak(scalars[end])
+        if lineEndsInWindow {
+            return String(trimmingTrailingSpaces(head).prefix(titleCharacters))
+        }
+
+        // The window may end inside a character, so the cut is safe only when a whole character
+        // follows it.
+        if head.count > titleCharacters {
+            let cut = head.index(head.startIndex, offsetBy: titleCharacters)
+            let title = String(head[..<cut])
+            let lineContinues = head[cut...].unicodeScalars.contains { !isSpace($0) } || hasTextBeforeLineBreak(scalars[end...])
+            return lineContinues ? title : trimmingTrailingSpaces(title)
+        }
+
+        let lineEnd = scalars[end...].firstIndex(where: isLineBreak) ?? scalars.endIndex
+        return String(trimmingTrailingSpaces(String(scalars[start..<lineEnd])).prefix(titleCharacters))
+    }
+
+    private static let titleCharacters = 200
+    /// The value is the number of scalars `firstLine(of:)` reads before it looks for the cut.
+    private static let titleWindow = 4_096
+
+    private static func isLineBreak(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x0A...0x0D, 0x85, 0x2028, 0x2029: return true
+        default: return false
+        }
+    }
+
+    private static func isSpace(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.value == 0x20 || scalar.value == 0x09 || (scalar.value > 0x7F && CharacterSet.whitespaces.contains(scalar))
+    }
+
+    private static func hasTextBeforeLineBreak(_ scalars: Substring.UnicodeScalarView) -> Bool {
+        for scalar in scalars {
+            if isLineBreak(scalar) { return false }
+            if !isSpace(scalar) { return true }
+        }
+        return false
+    }
+
+    private static func trimmingTrailingSpaces(_ text: String) -> String {
+        let scalars = text.unicodeScalars
+        guard let last = scalars.lastIndex(where: { !isSpace($0) }) else { return "" }
+        return String(scalars[...last])
     }
 
     // MARK: - Images and other data
@@ -197,9 +283,9 @@ struct PasteboardClassifier {
         return .skip(.empty)
     }
 
-    /// The item's other payloads, including the HTML and source URL that a browser adds next to an
-    /// image, follow in pasteboard order. If a payload would take the total past the size cap, it
-    /// does not follow. The main payload remains either way.
+    /// Returns the item's other payloads in pasteboard order. They include the HTML and source URL
+    /// that a browser adds next to an image. The size cap excludes any payload that would take the
+    /// total past the cap, but it never excludes the main payload.
     private func companions(of item: PasteboardSnapshot.Item, excluding excluded: Set<String>) -> [PasteboardRepresentation] {
         var total = 0
         var kept: [PasteboardRepresentation] = []
@@ -223,8 +309,10 @@ struct PasteboardClassifier {
         try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
+    /// This is the size of the item itself. A symbolic link is not followed. A missing item has
+    /// size 0.
     static func size(ofFileAt path: String) -> Int64 {
-        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
-        return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        var info = stat()
+        return lstat(path, &info) == 0 ? Int64(info.st_size) : 0
     }
 }

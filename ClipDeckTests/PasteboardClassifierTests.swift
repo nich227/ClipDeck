@@ -77,6 +77,100 @@ final class PasteboardClassifierTests: XCTestCase {
         XCTAssertEqual(result, .skip(.tooLarge(bytes: Constants.Capture.maxTextBytes + 1)))
     }
 
+    // MARK: - Titles and hashes
+
+    /// Define a title by splitting the whole text into lines, selecting the first nonblank line,
+    /// trimming it, and cutting it.
+    private func referenceFirstLine(of text: String) -> String {
+        let line = text.split(whereSeparator: \.isNewline)
+            .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        return String(line.prefix(200))
+    }
+
+    func testFirstLineMatchesTheReferenceOnEdgeCases() {
+        let word = String(repeating: "x", count: 199)
+        let cases: [String] = [
+            "",
+            " \n\t\r\n",
+            "one",
+            "  padded  ",
+            "\n\n  second line  \nthird",
+            "first\r\nsecond",
+            "\u{2028}after a line separator\u{2029}next",
+            "\u{85}after a next line\u{85}",
+            "\u{0B}vertical tab\u{0C}form feed",
+            "\u{A0}\u{3000}wide spaces\u{A0}",
+            " \u{301}combining mark after a space",
+            word + "    \nnext",
+            word + "    more after the cut",
+            word + String(repeating: " ", count: 5_000) + "\nnext",
+            word + String(repeating: " ", count: 5_000) + "tail",
+            String(repeating: "y", count: 10_000),
+            String(repeating: "y", count: 150) + String(repeating: " ", count: 6_000),
+            String(repeating: "y", count: 150) + String(repeating: " ", count: 6_000) + "z",
+            String(repeating: " ", count: 6_000) + "after many spaces",
+            String(repeating: "\n", count: 6_000) + "after many blank lines",
+            String(repeating: "\u{1F1FA}\u{1F1F8}", count: 300),
+            String(repeating: "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", count: 250) + " end",
+            "e" + String(repeating: "\u{301}", count: 5_000) + " zalgo\nnext",
+            String(repeating: "a\u{301}", count: 2_047) + "b\u{301}\u{301}\u{301}" + String(repeating: "c", count: 300),
+            String(repeating: "\u{1F468}\u{200D}\u{1F469}", count: 1_500),
+            // The 200th character starts at the last scalar that the first pass reads.
+            String(repeating: "a", count: 198) + "e" + String(repeating: "\u{301}", count: 3_896) + "b\u{301}\u{301}" + "ccc",
+            String(repeating: "a", count: 198) + "e" + String(repeating: "\u{301}", count: 3_895) + "b\u{301}\u{301}" + "ccc",
+            String(repeating: "a", count: 198) + "e" + String(repeating: "\u{301}", count: 3_897) + "b\u{301}\u{301}" + "ccc",
+            String(repeating: "a", count: 199) + "e" + String(repeating: "\u{301}", count: 3_895) + "b\u{301}\u{301}" + "   ",
+        ]
+        for text in cases {
+            XCTAssertEqual(PasteboardClassifier.firstLine(of: text), referenceFirstLine(of: text), "text of \(text.unicodeScalars.count) scalars")
+        }
+    }
+
+    func testFirstLineMatchesTheReferenceOnGeneratedText() {
+        let pieces = [
+            " ", " ", "\t", "\n", "\r\n", "\u{2028}", "\u{85}", "\u{A0}", "a", "b", "word", "\u{E9}", "\u{301}",
+            "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", "\u{1F1FA}", String(repeating: "q", count: 90),
+            String(repeating: " ", count: 70),
+        ]
+        var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+        func next(_ bound: Int) -> Int {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Int((state >> 33) % UInt64(bound))
+        }
+        for _ in 0..<400 {
+            let text = (0..<next(120)).map { _ in pieces[next(pieces.count)] }.joined()
+            XCTAssertEqual(PasteboardClassifier.firstLine(of: text), referenceFirstLine(of: text))
+        }
+    }
+
+    func testTextOfOnlySpacesAndLineBreaksIsSkipped() {
+        for text in [" \u{A0}\u{2028}\u{85}\t\r\n", String(repeating: " \n", count: 10_000)] {
+            let result = classifier.classify(Fixtures.snapshot([[PasteboardTypes.plainText: Data(text.utf8)]]))
+            XCTAssertEqual(result, .skip(.empty))
+        }
+    }
+
+    func testTextHashIsTheHashOfItsUTF8Bytes() {
+        XCTAssertEqual(Fixtures.textCapture("same").hash, "63b8984c122c71449fa44964324ebe349cbba49db511ef5d589aadc3300c778c")
+        XCTAssertEqual(
+            Fixtures.textCapture("h\u{E9}llo \u{1F44B}").hash, "ea761eabc97c5f2bc30ee318a0ee148e4d1abf6ebaca39593b1534b76134e60f"
+        )
+        let bridged = NSString(string: "bridged \u{E9} text") as String
+        let long = String(repeating: "long text \u{1F44B}\n", count: 50_000)
+        for text in ["", "a", bridged, long, NSMutableString(string: long) as String] {
+            XCTAssertEqual(PasteboardClassifier.hash(ofText: text), ContentHash.sha256(tag: "text", Data(text.utf8)))
+        }
+    }
+
+    func testLargeTextKeepsItsTitleSizeAndSearchText() throws {
+        let text = "\n  Title line  \n" + String(repeating: "body line\n", count: 200_000)
+        let result = try XCTUnwrap(capture([[PasteboardTypes.plainText: Data(text.utf8)]]))
+        XCTAssertEqual(result.title, "Title line")
+        XCTAssertEqual(result.byteSize, Int64(text.utf8.count))
+        XCTAssertEqual(result.searchText, text)
+    }
+
     // MARK: - Files
 
     func testFileURLIsFileReference() throws {
@@ -103,6 +197,59 @@ final class PasteboardClassifierTests: XCTestCase {
         XCTAssertEqual(ab.hash, ba.hash)
         XCTAssertEqual(ab.title, "a and 1 more")
         XCTAssertEqual(ab.byteSize, 20)
+    }
+
+    func testLargeSelectionKeepsPasteboardOrderAndSkipsWhatIsNotAFile() throws {
+        let paths = (0..<600).map { "/Volumes/Media/clip \($0).mov" }
+        var items = paths.map { [PasteboardTypes.fileURL: URL(fileURLWithPath: $0).dataRepresentation] }
+        items.insert([PasteboardTypes.fileURL: Data("https://example.com/not-a-file".utf8)], at: 300)
+        items.insert([PasteboardTypes.fileURL: Data([0xFF, 0xFE])], at: 0)
+        let result = try XCTUnwrap(capture(items))
+        XCTAssertEqual(result.files.map(\.path), paths)
+        XCTAssertEqual(result.files.map(\.bookmark), paths.map { Data("bookmark:\($0)".utf8) })
+        XCTAssertEqual(result.byteSize, 6_000)
+        XCTAssertEqual(result.title, "clip 0.mov and 599 more")
+        XCTAssertEqual(result.detail, paths[0])
+        XCTAssertEqual(result.searchText, paths.joined(separator: "\n"))
+    }
+
+    func testOnlyURLsThatAreNotFilesIsEmpty() {
+        let result = classifier.classify(Fixtures.snapshot([[PasteboardTypes.fileURL: Data("https://example.com/x".utf8)]]))
+        XCTAssertEqual(result, .skip(.empty))
+    }
+
+    func testRealBookmarksAndSizesForManyFiles() throws {
+        let directory = Fixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = try (0..<64).map { index -> URL in
+            let url = directory.appendingPathComponent("file \(index).txt")
+            try Data(repeating: 0x61, count: index + 1).write(to: url)
+            return url
+        }
+        let result = PasteboardClassifier().classify(Fixtures.snapshot(urls.map { [PasteboardTypes.fileURL: $0.dataRepresentation] }))
+        guard case .capture(let capture) = result else { return XCTFail("files did not classify") }
+        XCTAssertEqual(capture.files.map(\.path), urls.map(\.standardizedFileURL.path))
+        XCTAssertEqual(capture.byteSize, Int64((1...64).reduce(0, +)))
+        for (file, url) in zip(capture.files, urls) {
+            let resolved = PasteboardWriter.resolve(file)
+            XCTAssertNotNil(file.bookmark)
+            XCTAssertEqual(resolved.resolvingSymlinksInPath().path, url.resolvingSymlinksInPath().path)
+        }
+    }
+
+    func testFileSizeIsTheItemsOwnSize() throws {
+        let directory = Fixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("sized.bin")
+        try Data(count: 1_234).write(to: file)
+        let link = directory.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: file.path)
+
+        XCTAssertEqual(PasteboardClassifier.size(ofFileAt: file.path), 1_234)
+        XCTAssertEqual(PasteboardClassifier.size(ofFileAt: directory.appendingPathComponent("missing").path), 0)
+        let attributes = try FileManager.default.attributesOfItem(atPath: link.path)
+        XCTAssertEqual(PasteboardClassifier.size(ofFileAt: link.path), (attributes[.size] as? NSNumber)?.int64Value)
+        XCTAssertNotEqual(PasteboardClassifier.size(ofFileAt: link.path), 1_234)
     }
 
     // MARK: - Images and data
