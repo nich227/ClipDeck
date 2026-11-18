@@ -25,13 +25,13 @@ let windowHeight: CGFloat = 400
 let width: CGFloat = 1000
 let height: CGFloat = 760
 
-// Ink for a white window: near black for the name, grays for the rest.
+// A white window uses near black for the name and grays for the rest.
 let ink = NSColor(srgbRed: 0x1d / 255, green: 0x1d / 255, blue: 0x1f / 255, alpha: 1)
 let inkSoft = NSColor(srgbRed: 0x6e / 255, green: 0x6e / 255, blue: 0x73 / 255, alpha: 1)
 let inkFaint = NSColor(srgbRed: 0x8a / 255, green: 0x8a / 255, blue: 0x8e / 255, alpha: 1)
 
-/// The app registers the bundled wordmark face for this process. If the file is missing, the app
-/// uses the system serif and still draws the image.
+/// This function registers the bundled wordmark face for this process. If the font file is missing,
+/// the function returns the system serif, and the script still draws the image.
 func wordmarkFont(size: CGFloat) -> NSFont {
     let script = URL(fileURLWithPath: arguments[0]).deletingLastPathComponent()
     let candidates = [

@@ -1,15 +1,16 @@
 #!/bin/zsh
-# Builds the drag-to-Applications disk image from a built ClipDeck.app.
+# Creates the drag-to-Applications disk image from a built ClipDeck.app.
 #
 #   scripts/make-dmg.sh <path to ClipDeck.app> <version> [output.dmg] [--plain]
 #
 # The window opens at a fixed size with the app on the left and an alias to /Applications on the
 # right. Drag the app onto the alias to install it.
 #
-# By default the window shows the branded background from make-dmg-background.swift. Finder paints
-# a white surface behind any background picture in both appearances, so the window is white in
-# Light Mode and Dark Mode alike, and the picture's text is one mid gray that reads on white. With
-# --plain, the window has no picture and Finder's own surface and labels follow the appearance.
+# By default the window shows the branded background from make-dmg-background.swift. Finder paints a
+# white surface behind any background picture in both appearances, so the window is white in Light
+# Mode and Dark Mode alike. The picture's text is near black for the name and gray for the rest, so
+# it reads on white. With --plain, the window has no picture and Finder's own surface and labels
+# follow the appearance.
 set -euo pipefail
 
 APP="${1:?usage: make-dmg.sh <ClipDeck.app> <version> [out.dmg] [--plain]}"
@@ -56,9 +57,10 @@ hdiutil create -srcfolder "$STAGE" -volname "ClipDeck $VERSION" -fs HFS+ \
     -fsargs "-c c=64,a=16,e=16" -format UDRW -quiet "$RW"
 MOUNT="$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | grep -Eo '/Volumes/.*$' | head -1)"
 
-# Icon positions and window geometry. Finder counts the title bar in these bounds. Finder
-# scripting needs an Automation grant for the terminal that runs this. Without the grant, the
-# script still builds the image with Finder's default layout, and the message says why.
+# This step sets the icon positions and the window bounds. Finder counts the title bar in the window
+# bounds. Finder scripting needs an Automation grant for the terminal that runs this script. Without
+# the grant, the script still builds the image with Finder's default layout, and the message says
+# why.
 if ! osascript <<APPLESCRIPT
 tell application "Finder"
   tell disk "$(basename "$MOUNT")"

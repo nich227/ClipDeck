@@ -1,5 +1,5 @@
-// Renders the app's Instrument Serif wordmark as two transparent 2x PNGs for the README header:
-// assets/wordmark-light.png in near-black ink and assets/wordmark-dark.png in near-white.
+// Renders two transparent 2x PNGs of the app's Instrument Serif wordmark for the README header.
+// assets/wordmark-light.png uses near-black ink, and assets/wordmark-dark.png uses near-white ink.
 //
 //   swift scripts/make-wordmark.swift
 

@@ -1,7 +1,8 @@
 name: release
 
 # Pushing a tag like v1.0.1 builds and signs the app, publishes a GitHub Release, and adds the
-# release to the Sparkle appcast on gh-pages. Running apps poll this appcast through SUFeedURL.
+# release to the Sparkle appcast on gh-pages. Each running copy of the app polls this appcast
+# through SUFeedURL.
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
@@ -29,6 +30,13 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
 
+      # Every installed copy refuses an update signed with a key it does not trust, so a wrong key
+      # stops the release before anything is built.
+      - name: check the Sparkle key
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: node scripts/check-sparkle-key.js
+
       - run: brew install xcodegen
       - run: xcodegen generate
 
@@ -39,34 +47,7 @@ jobs:
         env:
           CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(uuidgen)"
-
-          printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security set-keychain-settings -lut 900 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
-            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          # Without permission to use the key, codesign stops at a prompt.
-          security set-key-partition-list -S apple-tool:,apple:,codesign: \
-            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
-          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
-
-          rm -f "$RUNNER_TEMP/cert.p12"
-
-          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
-            | grep 'Developer ID Application' | head -1 \
-            | sed 's/.*"\(.*\)"/\1/')"
-          if [ -z "$IDENTITY" ]; then
-            echo "no Developer ID Application identity in the imported certificate" >&2
-            exit 1
-          fi
-          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
-          echo "keychain=$KEYCHAIN" >> "$GITHUB_OUTPUT"
+        run: scripts/import-certificate.sh
 
       - name: build
         run: >
@@ -115,7 +96,7 @@ jobs:
             fi
           done
 
-      # We complete notarization before we make the zip and dmg files because both carry the stapled
+      # We complete notarization before we make the ZIP and DMG files because both carry the stapled
       # ticket.
       - name: notarize
         env:
