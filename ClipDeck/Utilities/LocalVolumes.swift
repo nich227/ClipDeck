@@ -1,9 +1,9 @@
 import Darwin
 import Foundation
 
-/// This is a snapshot of the mounted volumes, read from the kernel's mount table without touching
-/// them. It lets the store check whether a file still exists without blocking on a network volume
-/// that has stopped answering.
+/// Creating this snapshot reads the kernel's mount table without touching the mounted volumes. It
+/// lets the store check whether a file still exists without blocking on a network volume that has
+/// stopped answering.
 struct LocalVolumes: Sendable {
     /// This lists the mount points of non-local volumes from longest to shortest.
     let remoteMountPoints: [String]
@@ -36,10 +36,10 @@ struct LocalVolumes: Sendable {
         }
     }
 
-    /// This is true when the file is gone. The system assumes files on non-local volumes are
-    /// present, so a stalled server never delays the list.
+    /// This is true when the file is gone. A file on a non-local volume counts as present, so a
+    /// stalled server never delays the list.
     func isMissing(atPath path: String) -> Bool {
         guard !isRemote(path) else { return false }
-        return !FileManager.default.fileExists(atPath: path)
+        return access(path, F_OK) != 0
     }
 }

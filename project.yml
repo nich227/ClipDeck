@@ -8,7 +8,7 @@ options:
 packages:
   Lottie:
     url: https://github.com/airbnb/lottie-ios
-    from: "4.6.0"
+    from: "4.6.1"
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: "2.8.0"

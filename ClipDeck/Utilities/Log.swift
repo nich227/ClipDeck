@@ -13,8 +13,8 @@ enum Log {
 extension Notification.Name {
     /// This appears on the main thread after the history adds, bumps, or removes items.
     static let clipHistoryDidChange = Notification.Name("com.kevster.clipdeck.historyDidChange")
-    /// It is posted after the user saves a new shortcut outside a recording, such as during a
-    /// reset.
+    /// It is posted after the user saves a new shortcut when no recording is active, such as during
+    /// a reset.
     static let hotkeyDidChange = Notification.Name("com.kevster.clipdeck.hotkeyDidChange")
     /// The recorder posts this while it listens, so it can also record the live shortcut.
     static let hotkeyRecordingDidBegin = Notification.Name("com.kevster.clipdeck.hotkeyRecordingDidBegin")
