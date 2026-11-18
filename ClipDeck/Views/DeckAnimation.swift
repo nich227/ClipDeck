@@ -3,6 +3,20 @@ import Lottie
 import os
 import SwiftUI
 
+private struct DeckReduceMotionKey: EnvironmentKey {
+    static let defaultValue: Bool? = nil
+}
+
+extension EnvironmentValues {
+    /// If this value is set, drawn animations use it instead of the system's Reduce Motion setting.
+    /// The machine that runs the tests chooses the system setting, so a test sets this value to
+    /// choose its own Reduce Motion behavior.
+    var deckReduceMotion: Bool? {
+        get { self[DeckReduceMotionKey.self] }
+        set { self[DeckReduceMotionKey.self] = newValue }
+    }
+}
+
 /// Drawn animations use one entry point: a bundled Lottie file in a single tint. A one-shot draws
 /// on once and holds its still frame. A loop repeats. Nothing plays while `isActive` is false, and
 /// a loop then holds no layers at all. With Reduce Motion on, the still frame shows without moving.
@@ -16,7 +30,8 @@ struct DeckAnimation: View {
     private let label: String?
     private let onFinished: (() -> Void)?
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.deckReduceMotion) private var reduceMotionOverride
 
     /// - Parameters:
     ///   - name: a file from `Constants.Animations`.
@@ -58,7 +73,9 @@ struct DeckAnimation: View {
     var body: some View {
         let player = DeckAnimationPlayer(
             name: name,
-            playback: Self.playback(loops: loops, isActive: isActive, reduceMotion: reduceMotion, stillOnly: stillOnly),
+            playback: Self.playback(
+                loops: loops, isActive: isActive, reduceMotion: reduceMotionOverride ?? systemReduceMotion, stillOnly: stillOnly
+            ),
             tint: tint,
             onFinished: loops || stillOnly ? nil : onFinished
         )

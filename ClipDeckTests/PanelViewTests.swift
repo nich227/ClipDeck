@@ -11,14 +11,21 @@ final class PanelViewTests: XCTestCase {
     private var store: ClipStore!
     private var recorder: FetchRecorder!
     private var viewModel: HistoryViewModel!
-    private var host: NSHostingView<PanelView>!
+    private var host: NSHostingView<AnyView>!
 
     override func setUp() async throws {
         directory = Fixtures.temporaryDirectory()
         store = try ClipStore(location: StoreLocation(root: directory))
         recorder = FetchRecorder(store: store)
         viewModel = HistoryViewModel(store: store, fetch: recorder.fetch)
-        host = NSHostingView(rootView: PanelView(viewModel: viewModel, onCopy: {}))
+        hostPanel(reduceMotion: false)
+    }
+
+    /// The tests choose Reduce Motion themselves. The machine that runs them may have the system
+    /// setting turned on, and every animation would then show its still frame.
+    private func hostPanel(reduceMotion: Bool) {
+        let panel = PanelView(viewModel: viewModel, onCopy: {}).environment(\.deckReduceMotion, reduceMotion)
+        host = NSHostingView(rootView: AnyView(panel))
         host.frame = NSRect(x: 0, y: 0, width: Constants.Panel.width, height: Constants.Panel.height)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -86,6 +93,21 @@ final class PanelViewTests: XCTestCase {
 
         viewModel.panelWillShow()
         await waitUntil { paperclip.playback == .loop && paperclip.player != nil }
+    }
+
+    func testReduceMotionShowsTheStillFrameWithoutPlaying() async throws {
+        hostPanel(reduceMotion: true)
+        viewModel.panelWillShow()
+        await waitUntil { self.surface(Constants.Animations.paperclip)?.player != nil }
+        let paperclip = try XCTUnwrap(surface(Constants.Animations.paperclip))
+        XCTAssertEqual(paperclip.playback, .still)
+        XCTAssertEqual(paperclip.player?.isAnimationPlaying, false)
+
+        viewModel.query = "zz"
+        await waitUntil { self.surface(Constants.Animations.noResults)?.player != nil }
+        let glass = try XCTUnwrap(surface(Constants.Animations.noResults))
+        XCTAssertEqual(glass.playback, .still)
+        XCTAssertEqual(glass.player?.isAnimationPlaying, false)
     }
 
     func testTheNoResultsGlassDrawsOnceWhileASearchKeepsFindingNothing() async throws {
